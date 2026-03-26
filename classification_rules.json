@@ -1,0 +1,360 @@
+{
+    "_metadata": {
+        "version": "1.0",
+        "description": "Classification rules for Purview custom connectors. Data stewards maintain this file.",
+        "last_updated": "2026-03-18",
+        "updated_by": "Data Governance Team"
+    },
+    "field_name_patterns": [
+        {
+            "pattern": "*email*",
+            "classification": "MICROSOFT.PERSONAL.EMAIL",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*phone*",
+            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*firstname*",
+            "classification": "MICROSOFT.PERSONAL.NAME",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*first_name*",
+            "classification": "MICROSOFT.PERSONAL.NAME",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*lastname*",
+            "classification": "MICROSOFT.PERSONAL.NAME",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*last_name*",
+            "classification": "MICROSOFT.PERSONAL.NAME",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*fullname*",
+            "classification": "MICROSOFT.PERSONAL.NAME",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*descriptor*",
+            "classification": "MICROSOFT.PERSONAL.NAME",
+            "priority": 5,
+            "enabled": true
+        },
+        {
+            "pattern": "*ssn*",
+            "classification": "MICROSOFT.PERSONAL.US.SOCIAL_SECURITY_NUMBER",
+            "priority": 20,
+            "enabled": true
+        },
+        {
+            "pattern": "*social_security*",
+            "classification": "MICROSOFT.PERSONAL.US.SOCIAL_SECURITY_NUMBER",
+            "priority": 20,
+            "enabled": true
+        },
+        {
+            "pattern": "*national_id*",
+            "classification": "MICROSOFT.PERSONAL.NATIONAL_ID",
+            "priority": 20,
+            "enabled": true
+        },
+        {
+            "pattern": "*passport*",
+            "classification": "MICROSOFT.PERSONAL.PASSPORT_NUMBER",
+            "priority": 20,
+            "enabled": true
+        },
+        {
+            "pattern": "*date_of_birth*",
+            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+            "priority": 15,
+            "enabled": true
+        },
+        {
+            "pattern": "*birthdate*",
+            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+            "priority": 15,
+            "enabled": true
+        },
+        {
+            "pattern": "*dob*",
+            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+            "priority": 15,
+            "enabled": true
+        },
+        {
+            "pattern": "*street*",
+            "classification": "MICROSOFT.PERSONAL.ADDRESS",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*mailing*address*",
+            "classification": "MICROSOFT.PERSONAL.ADDRESS",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*postal*",
+            "classification": "MICROSOFT.PERSONAL.ADDRESS",
+            "priority": 8,
+            "enabled": true
+        },
+        {
+            "pattern": "*zipcode*",
+            "classification": "MICROSOFT.PERSONAL.ADDRESS",
+            "priority": 8,
+            "enabled": true
+        },
+        {
+            "pattern": "*credit_card*",
+            "classification": "MICROSOFT.FINANCIAL.CREDIT_CARD_NUMBER",
+            "priority": 20,
+            "enabled": true
+        },
+        {
+            "pattern": "*bank_account*",
+            "classification": "MICROSOFT.FINANCIAL.BANK_ACCOUNT_NUMBER",
+            "priority": 20,
+            "enabled": true
+        },
+        {
+            "pattern": "*iban*",
+            "classification": "MICROSOFT.FINANCIAL.IBAN",
+            "priority": 20,
+            "enabled": true
+        },
+        {
+            "pattern": "*swift*",
+            "classification": "MICROSOFT.FINANCIAL.SWIFT_CODE",
+            "priority": 15,
+            "enabled": true
+        },
+        {
+            "pattern": "*salary*",
+            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+            "priority": 15,
+            "enabled": true
+        },
+        {
+            "pattern": "*annualrevenue*",
+            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*annual_revenue*",
+            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*ip_address*",
+            "classification": "MICROSOFT.PERSONAL.IPADDRESS",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*ipaddress*",
+            "classification": "MICROSOFT.PERSONAL.IPADDRESS",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*worker_id*",
+            "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*workerid*",
+            "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
+            "priority": 10,
+            "enabled": true
+        },
+        {
+            "pattern": "*employee_id*",
+            "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
+            "priority": 10,
+            "enabled": true
+        }
+    ],
+    "field_type_rules": [
+        {
+            "type": "email",
+            "classification": "MICROSOFT.PERSONAL.EMAIL",
+            "priority": 5,
+            "enabled": true
+        },
+        {
+            "type": "phone",
+            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+            "priority": 5,
+            "enabled": true
+        },
+        {
+            "type": "currency",
+            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+            "priority": 5,
+            "enabled": true
+        },
+        {
+            "type": "url",
+            "classification": "MICROSOFT.MISCELLANEOUS.URL",
+            "priority": 3,
+            "enabled": true
+        }
+    ],
+    "object_field_rules": [
+        {
+            "source": "salesforce",
+            "object": "Contact",
+            "field": "Email",
+            "classification": "MICROSOFT.PERSONAL.EMAIL",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "salesforce",
+            "object": "Contact",
+            "field": "Birthdate",
+            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "salesforce",
+            "object": "Contact",
+            "field": "MailingStreet",
+            "classification": "MICROSOFT.PERSONAL.ADDRESS",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "salesforce",
+            "object": "Contact",
+            "field": "MailingCity",
+            "classification": "MICROSOFT.PERSONAL.ADDRESS",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "salesforce",
+            "object": "Lead",
+            "field": "Email",
+            "classification": "MICROSOFT.PERSONAL.EMAIL",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "salesforce",
+            "object": "Lead",
+            "field": "Phone",
+            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "salesforce",
+            "object": "Account",
+            "field": "Phone",
+            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "salesforce",
+            "object": "Account",
+            "field": "AnnualRevenue",
+            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "salesforce",
+            "object": "Opportunity",
+            "field": "Amount",
+            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "workday",
+            "object": "Workers",
+            "field": "workerId",
+            "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "workday",
+            "object": "Workers",
+            "field": "descriptor",
+            "classification": "MICROSOFT.PERSONAL.NAME",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "workday",
+            "object": "Workers",
+            "field": "primaryWorkEmail",
+            "classification": "MICROSOFT.PERSONAL.EMAIL",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "workday",
+            "object": "Workers",
+            "field": "primaryWorkPhone",
+            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "netsuite",
+            "object": "customer",
+            "field": "email",
+            "classification": "MICROSOFT.PERSONAL.EMAIL",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "netsuite",
+            "object": "customer",
+            "field": "phone",
+            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "netsuite",
+            "object": "employee",
+            "field": "email",
+            "classification": "MICROSOFT.PERSONAL.EMAIL",
+            "priority": 50,
+            "enabled": true
+        },
+        {
+            "source": "netsuite",
+            "object": "vendor",
+            "field": "email",
+            "classification": "MICROSOFT.PERSONAL.EMAIL",
+            "priority": 50,
+            "enabled": true
+        }
+    ]
+}
