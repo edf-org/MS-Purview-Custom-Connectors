@@ -9,9 +9,6 @@ This repository contains the comprehensive Microsoft Purview Data Management Mat
 ### 📂 Repository Structure
 
 ```
-├── Microsoft_Purview_Data_Management_Maturity_Plan.pptx   # Full presentation (36 slides)
-├── Microsoft_Purview_Data_Management_Maturity_Plan.docx   # Word document version
-├── Microsoft_Purview_Data_Management_Maturity_Plan.pdf    # PDF version
 ├── Purview_Custom_API_Architecture.docx                   # Architecture & Implementation Guide
 ├── README.md                                               # This file
 └── connectors/                                             # Custom connectors + classification engine
@@ -22,25 +19,6 @@ This repository contains the comprehensive Microsoft Purview Data Management Mat
     ├── purview_workday_connector_example.py                # Workday → Purview connector
     └── purview_sql_custom_connector_example.py             # SQL Server → Purview custom connector
 ```
-
----
-
-### 📊 Presentation Overview (36 Slides)
-
-| Section | Slides | Content |
-|---------|--------|---------|
-| Executive Summary | 1–3 | Title, agenda, core principle & three-pillar summary |
-| Three Pillars Architecture | 4–5 | Full module mapping with shared capabilities & foundation layer |
-| Master Dependency Map | 6 | 11-row component dependency table |
-| Six-Phase Roadmap | 7–20 | Phase flow overview + 2 detail slides per phase (activities, outputs, dependencies) |
-| Glossary Connection Map | 21 | Enterprise Glossary as central bridge |
-| Cross-Phase Matrix | 22 | Colour-coded R (Required) / E (Enriching) dependency matrix |
-| RACI Model | 23 | 10-activity × 5-role responsibility assignment |
-| Maturity Staircase | 24 | Five-level visual from Ad Hoc → Optimised |
-| Custom Connector Strategy | 25 | Closing the classification gap — limitation, solution, 4-step flow |
-| DAMA DMBOK2 Alignment | 26–28 | All 11 DAMA knowledge areas mapped to Purview with coverage ratings (updated for custom connectors) |
-| Batchelder Best Practices | 29–35 | Key frameworks from the Data Governance Handbook integrated into the roadmap |
-| Close | 36 | Thank you slide |
 
 ---
 
