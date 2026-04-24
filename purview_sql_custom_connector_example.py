@@ -452,6 +452,11 @@ class LineageService:
         }
 
         if relationship.query_text:
+            # Security note: queryText is visible to all Purview Data Reader-role users.
+            # Avoid storing full SQL queries that reveal schema internals, credentials,
+            # or sensitive table names. Store only a high-level description or stored
+            # procedure name, and ensure your Purview collection permissions are scoped
+            # appropriately before populating this attribute.
             process_entity["attributes"]["queryText"] = relationship.query_text
 
         payload = {"entities": [process_entity]}
@@ -541,9 +546,12 @@ class MetadataService:
         #     "Authorization": f"Bearer {token}",
         #     "Content-Type": "application/json",
         # }
+        # # isOverwrite=false — merges new attributes rather than replacing all existing
+        # # business metadata. Set to true only if you intentionally want to wipe metadata
+        # # applied by other tools or teams on each connector run.
         # response = requests.post(
         #     f"{self.config.endpoint}/api/atlas/v2/entity/guid/{entity_guid}"
-        #     f"/businessmetadata?isOverwrite=true",
+        #     f"/businessmetadata?isOverwrite=false",
         #     headers=headers,
         #     json=metadata,
         #     timeout=REQUEST_TIMEOUT,
@@ -673,8 +681,8 @@ class SQLServerConnector:
             source="sql",
             object_name="Orders",
             fields=columns,
-            field_name_key="name",
-            field_type_key="type",
+            name_key="name",
+            type_key="type",
         )
 
         for col in columns:

@@ -211,6 +211,8 @@ USAGE
 import json
 import logging
 import os
+import re
+import urllib.parse
 from dataclasses import dataclass
 from typing import Optional
 
@@ -234,13 +236,36 @@ REQUEST_TIMEOUT = (10, 30)
 
 
 def _validate_identifier(value: str, allow_list: list = None) -> str:
-    """Validate that a string is a safe SuiteQL/API identifier."""
-    import re
+    """Validate that a string is a safe SuiteQL/API identifier.
+
+    Rejects values containing characters that could be used for SuiteQL injection
+    (spaces, quotes, semicolons, dots, slashes, etc.).
+    Optionally validates against an explicit allow-list.
+    Raises ValueError if the identifier is not safe.
+    """
     if allow_list and value not in allow_list:
         raise ValueError(f"Identifier '{value}' is not in the allow-list.")
     if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', value):
         raise ValueError(f"Identifier '{value}' contains invalid characters.")
     return value
+
+
+# SuiteQL allow-list: maps public record_type names to their SuiteQL table expressions.
+# This is defined at module level so it can be used by both get_record_count()
+# (live mode) and as a validation allow-list (dry-run and live mode alike).
+# Add entries here when adding new record types to RECORD_TYPES_TO_SCAN.
+SUITEQL_TABLE_MAP = {
+    "customer":      "customer",
+    "vendor":        "vendor",
+    "employee":      "employee",
+    "salesOrder":    "transaction WHERE type = 'SalesOrd'",
+    "invoice":       "transaction WHERE type = 'CustInvc'",
+    "purchaseOrder": "transaction WHERE type = 'PurchOrd'",
+    "vendorBill":    "transaction WHERE type = 'VendBill'",
+    "inventoryItem": "item WHERE itemType = 'InvtPart'",
+    "journalEntry":  "transaction WHERE type = 'Journal'",
+    "account":       "account",
+}
 
 
 # =============================================================================
@@ -369,6 +394,14 @@ class NetSuiteConfig:
     @property
     def base_url(self) -> str:
         """Base URL for NetSuite SuiteTalk REST API."""
+        # Validate account_id before inserting it as a URL subdomain.
+        # A malicious value like "evil.attacker" would otherwise create
+        # https://evil.attacker.suitetalk.api.netsuite.com — a host the attacker controls.
+        if not re.match(r'^[A-Za-z0-9_]+$', self.account_id):
+            raise ValueError(
+                f"NetSuite account_id '{self.account_id}' contains invalid characters. "
+                f"Expected alphanumeric characters and underscores only (e.g. '1234567' or '1234567_SB1')."
+            )
         account_slug = self.account_id.lower().replace("_", "-")
         return f"https://{account_slug}.suitetalk.api.netsuite.com/services/rest"
 
@@ -477,6 +510,11 @@ class NetSuiteDiscoveryService:
         Returns:
             List of field metadata dicts: [{name, type, label, required, ...}, ...]
         """
+        # Validate the record_type against the allow-list before using it in a URL.
+        # This prevents an unexpected value from constructing a malformed or
+        # attacker-controlled API path.
+        _validate_identifier(record_type, list(SUITEQL_TABLE_MAP.keys()))
+
         # --- Uncomment for real usage ---
         # url = f"{self.config.record_api_url}/metadata-catalog/{record_type}"
         # response = requests.get(url, auth=self.auth.get_auth(), headers=self.auth.get_headers(),
@@ -508,22 +546,18 @@ class NetSuiteDiscoveryService:
         Uses: POST /services/rest/query/v1/suiteql
         Body: {"q": "SELECT COUNT(*) AS cnt FROM {table}"}
         """
+        # SuiteQL injection guard — always active in both dry-run and live mode.
+        # SUITEQL_TABLE_MAP maps public record_type names to safe, pre-approved
+        # SuiteQL table expressions. record_type is never interpolated directly
+        # into a query string; only the pre-approved table expression is used.
+        if record_type not in SUITEQL_TABLE_MAP:
+            raise ValueError(
+                f"Record type '{record_type}' is not in the SuiteQL allow-list. "
+                f"Add it to SUITEQL_TABLE_MAP before use."
+            )
+        table = SUITEQL_TABLE_MAP[record_type]
+
         # --- Uncomment for real usage ---
-        # # Security: use an explicit allow-list map to prevent SuiteQL injection.
-        # # Only pre-defined record types are allowed; arbitrary input is rejected.
-        # table_map = {
-        #     "customer": "customer", "vendor": "vendor", "employee": "employee",
-        #     "salesOrder": "transaction WHERE type = 'SalesOrd'",
-        #     "invoice": "transaction WHERE type = 'CustInvc'",
-        #     "purchaseOrder": "transaction WHERE type = 'PurchOrd'",
-        #     "vendorBill": "transaction WHERE type = 'VendBill'",
-        #     "inventoryItem": "item WHERE itemType = 'InvtPart'",
-        #     "journalEntry": "transaction WHERE type = 'Journal'",
-        #     "account": "account",
-        # }
-        # if record_type not in table_map:
-        #     raise ValueError(f"Record type '{record_type}' is not in the SuiteQL allow-list.")
-        # table = table_map[record_type]
         # url = self.config.suiteql_url
         # payload = {"q": f"SELECT COUNT(*) AS cnt FROM {table}"}
         # response = requests.post(url, json=payload, auth=self.auth.get_auth(),

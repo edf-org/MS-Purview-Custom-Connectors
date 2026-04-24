@@ -262,6 +262,8 @@ to real systems.
 import json
 import logging
 import os
+import re
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -295,7 +297,6 @@ def _validate_identifier(value: str, allow_list: list = None) -> str:
 
     Raises ValueError if the identifier is not safe.
     """
-    import re
     if allow_list and value not in allow_list:
         raise ValueError(
             f"Identifier '{value}' is not in the allow-list. "
@@ -307,6 +308,24 @@ def _validate_identifier(value: str, allow_list: list = None) -> str:
             f"Only alphanumeric characters and underscores are allowed."
         )
     return value
+
+
+def _validate_url_domain(url: str, expected_suffix: str) -> str:
+    """Validate that a URL uses HTTPS and its host ends with the expected domain suffix.
+
+    Prevents SSRF if a URL value retrieved from Key Vault has been tampered with
+    or misconfigured to point to an attacker-controlled host.
+    Raises ValueError if the URL fails validation.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"URL '{url}' must use HTTPS.")
+    if not parsed.netloc.lower().endswith(expected_suffix):
+        raise ValueError(
+            f"URL '{url}' does not end with expected domain '{expected_suffix}'. "
+            f"Verify the value stored in Key Vault."
+        )
+    return url
 
 
 # =============================================================================
@@ -415,6 +434,10 @@ class SalesforceConfig:
     def base_api_url(self) -> str:
         """Base URL for Salesforce REST API calls."""
         url = self.instance_url or self.domain_url
+        # SSRF guard: ensure the URL points to a Salesforce-owned domain.
+        # This prevents a misconfigured or tampered Key Vault secret from
+        # redirecting authenticated requests to an attacker-controlled host.
+        _validate_url_domain(url, ".salesforce.com")
         return f"{url}/services/data/{self.api_version}"
 
 
@@ -579,6 +602,10 @@ class SalesforceDiscoveryService:
         Returns:
             Full sObject Describe response dict.
         """
+        # Validate the object name before using it in a URL — prevents SOQL/path injection
+        # if object names are ever sourced from external input rather than OBJECTS_TO_SCAN.
+        _validate_identifier(object_name, OBJECTS_TO_SCAN or None)
+
         # --- Uncomment for real usage ---
         # url = f"{self.config.base_api_url}/sobjects/{object_name}/describe/"
         # response = requests.get(url, headers=self.auth.get_headers(), timeout=REQUEST_TIMEOUT)

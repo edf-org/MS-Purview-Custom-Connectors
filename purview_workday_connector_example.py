@@ -159,6 +159,9 @@ USAGE
 import json
 import logging
 import os
+import re
+import time
+import urllib.parse
 from dataclasses import dataclass
 from typing import Optional
 
@@ -181,13 +184,36 @@ REQUEST_TIMEOUT = (10, 30)
 
 
 def _validate_identifier(value: str, allow_list: list = None) -> str:
-    """Validate that a string is a safe API identifier."""
-    import re
+    """Validate that a string is a safe API identifier.
+
+    Rejects values containing characters that could be used for injection
+    (spaces, quotes, semicolons, dots, slashes, etc.).
+    Optionally validates against an explicit allow-list.
+    Raises ValueError if the identifier is not safe.
+    """
     if allow_list and value not in allow_list:
         raise ValueError(f"Identifier '{value}' is not in the allow-list.")
     if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', value):
         raise ValueError(f"Identifier '{value}' contains invalid characters.")
     return value
+
+
+def _validate_url_domain(url: str, expected_suffix: str) -> str:
+    """Validate that a URL uses HTTPS and its host ends with the expected domain suffix.
+
+    Prevents SSRF if a URL value retrieved from Key Vault has been tampered with
+    or misconfigured to point to an attacker-controlled host.
+    Raises ValueError if the URL fails validation.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"URL '{url}' must use HTTPS.")
+    if not parsed.netloc.lower().endswith(expected_suffix):
+        raise ValueError(
+            f"URL '{url}' does not end with expected domain '{expected_suffix}'. "
+            f"Verify the value stored in Key Vault."
+        )
+    return url
 
 
 # =============================================================================
@@ -355,26 +381,55 @@ class PurviewConfig:
 
 @dataclass
 class WorkdayConfig:
-    client_id: str = ""; client_secret: str = ""; refresh_token: str = ""
-    tenant_url: str = ""; tenant_name: str = ""; access_token: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    refresh_token: str = ""
+    tenant_url: str = ""
+    tenant_name: str = ""
+    access_token: str = ""
+    token_expires_at: float = 0.0   # epoch seconds; 0 = never authenticated
     api_version: str = WORKDAY_API_VERSION
+
     @classmethod
     def from_key_vault(cls, kv_url):
         # --- Uncomment for real usage ---
         # credential = DefaultAzureCredential()
         # kv_client = SecretClient(vault_url=kv_url, credential=credential)
-        # return cls(client_id=kv_client.get_secret("workday-client-id").value,
-        #            client_secret=kv_client.get_secret("workday-client-secret").value,
-        #            refresh_token=kv_client.get_secret("workday-refresh-token").value,
-        #            tenant_url=kv_client.get_secret("workday-tenant-url").value,
-        #            tenant_name=kv_client.get_secret("workday-tenant-name").value)
+        # tenant_url = kv_client.get_secret("workday-tenant-url").value
+        # tenant_name = kv_client.get_secret("workday-tenant-name").value
+        # # SSRF guard: ensure the tenant URL actually points to workday.com
+        # _validate_url_domain(tenant_url, ".workday.com")
+        # _validate_identifier(tenant_name)
+        # return cls(
+        #     client_id=kv_client.get_secret("workday-client-id").value,
+        #     client_secret=kv_client.get_secret("workday-client-secret").value,
+        #     refresh_token=kv_client.get_secret("workday-refresh-token").value,
+        #     tenant_url=tenant_url,
+        #     tenant_name=tenant_name,
+        # )
         logger.info(f"[DRY RUN] Would retrieve Workday credentials from Key Vault: {kv_url}")
-        return cls(client_id="dry-run-id", client_secret="dry-run-secret", refresh_token="dry-run-token",
-                   tenant_url="https://wd5-impl-services1.workday.com", tenant_name="mycompany")
+        return cls(
+            client_id="dry-run-id",
+            client_secret="dry-run-secret",
+            refresh_token="dry-run-token",
+            tenant_url="https://wd5-impl-services1.workday.com",
+            tenant_name="mycompany",
+        )
+
     @property
-    def base_api_url(self): return f"{self.tenant_url}/ccx/api/{self.api_version}/{self.tenant_name}"
+    def base_api_url(self):
+        # SSRF guard active in both dry-run and live mode: tenant_url must be a
+        # workday.com host. This prevents a misconfigured Key Vault secret from
+        # redirecting authenticated requests to an attacker-controlled server.
+        _validate_url_domain(self.tenant_url, ".workday.com")
+        _validate_identifier(self.tenant_name)
+        return f"{self.tenant_url}/ccx/api/{self.api_version}/{self.tenant_name}"
+
     @property
-    def token_url(self): return f"{self.tenant_url}/ccx/oauth2/{self.tenant_name}/token"
+    def token_url(self):
+        _validate_url_domain(self.tenant_url, ".workday.com")
+        _validate_identifier(self.tenant_name)
+        return f"{self.tenant_url}/ccx/oauth2/{self.tenant_name}/token"
 
 
 # =============================================================================
@@ -390,18 +445,42 @@ class PurviewAuthService:
 class WorkdayAuthService:
     """OAuth 2.0 with refresh tokens. POST {tenant_url}/ccx/oauth2/{tenant}/token
     Body: grant_type=refresh_token&client_id=...&client_secret=...&refresh_token=..."""
+
+    # Refresh the token this many seconds before it actually expires to avoid
+    # mid-run 401 errors on long connector runs.
+    _TOKEN_EXPIRY_BUFFER_SECS = 60
+
     def __init__(self, config): self.config = config
+
+    def is_token_expired(self) -> bool:
+        """Return True if the current access token has expired (or was never obtained)."""
+        if not self.config.access_token or self.config.token_expires_at == 0.0:
+            return True
+        return time.time() >= (self.config.token_expires_at - self._TOKEN_EXPIRY_BUFFER_SECS)
+
     def authenticate(self):
         # --- Uncomment for real usage ---
+        # import time
         # response = requests.post(self.config.token_url, data={
         #     "grant_type": "refresh_token", "client_id": self.config.client_id,
         #     "client_secret": self.config.client_secret, "refresh_token": self.config.refresh_token},
         #     timeout=REQUEST_TIMEOUT)
         # response.raise_for_status()
-        # self.config.access_token = response.json()["access_token"]
+        # token_data = response.json()
+        # self.config.access_token = token_data["access_token"]
+        # expires_in = token_data.get("expires_in", 3600)  # Workday default is 3600s
+        # self.config.token_expires_at = time.time() + expires_in
+        # logger.info(f"Authenticated to Workday. Token expires in {expires_in}s.")
         logger.info(f"[DRY RUN] Would authenticate to Workday at: {self.config.token_url}")
         self.config.access_token = "dry-run-wd-token"
         return self.config
+
+    def ensure_authenticated(self):
+        """Re-authenticate if the current token is expired. Call before each API request."""
+        if self.is_token_expired():
+            logger.info("Workday access token expired or not yet obtained — re-authenticating.")
+            self.authenticate()
+
     def get_headers(self):
         return {"Authorization": f"Bearer {self.config.access_token}", "Content-Type": "application/json"}
 
@@ -420,6 +499,8 @@ class WorkdayDiscoveryService:
     def discover_objects(self, object_filter=None):
         objects = []
         for name in (object_filter or OBJECTS_TO_SCAN):
+            # Validate each object name before using it in API URLs.
+            _validate_identifier(name, list(OBJECT_METADATA.keys()))
             meta = OBJECT_METADATA.get(name, {})
             objects.append({"name": name, "label": meta.get("label", name),
                            "description": meta.get("description", ""),
@@ -429,6 +510,7 @@ class WorkdayDiscoveryService:
         return objects
 
     def get_object_fields(self, object_name):
+        _validate_identifier(object_name, list(OBJECT_METADATA.keys()))
         return OBJECT_METADATA.get(object_name, {}).get("fields", [])
 
     def get_record_count(self, object_name):
@@ -522,7 +604,11 @@ class WorkdayConnector:
 
         # Step 1: Authenticate
         logger.info("\n--- Step 1: Authentication ---")
-        token = self.pv_auth.get_bearer_token(); self.wd_auth.authenticate()
+        token = self.pv_auth.get_bearer_token()
+        # ensure_authenticated() checks token expiry and re-authenticates if needed.
+        # In production, also call self.wd_auth.ensure_authenticated() before any
+        # individual Workday API request to handle tokens that expire mid-run.
+        self.wd_auth.ensure_authenticated()
         ep = self.pv.endpoint
 
         # Step 2: Register types
@@ -539,7 +625,8 @@ class WorkdayConnector:
             f"workday://{self.label}", f"Workday - {self.label}",
             f"Workday tenant: {self.label}",
             {"tenantName": self.wd.tenant_name, "tenantUrl": self.wd.tenant_url,
-             "apiVersion": self.wd.api_version, "environment": "production"}))
+             "apiVersion": self.wd.api_version,
+             "environment": os.environ.get("WORKDAY_ENVIRONMENT", "production")}))
 
         # Object + field entities
         for obj in objects:
@@ -575,7 +662,8 @@ class WorkdayConnector:
         logger.info("\n--- Step 6: Apply Business Metadata and Classifications ---")
         MetadataService.apply_business_metadata(ep, token, "dry-run-guid-workers",
             {"DataQuality": {"lastValidated": "2026-02-16T02:00:00Z", "qualityScore": 97.2,
-                             "dataOwner": "HR Systems Team", "dataSteward": "John Doe"}})
+                             "dataOwner": os.environ.get("DATA_OWNER_NAME", ""),
+                             "dataSteward": os.environ.get("DATA_STEWARD_NAME", "")}})
 
         # Classify fields — now driven by classification_rules.json instead of isPII flags
         classification_engine = ClassificationEngine()
