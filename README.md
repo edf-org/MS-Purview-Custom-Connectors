@@ -11,13 +11,14 @@ This repository contains the comprehensive Microsoft Purview Data Management Mat
 ```
 ├── Purview_Custom_API_Architecture.docx                   # Architecture & Implementation Guide
 ├── README.md                                               # This file
-└── connectors/                                             # Custom connectors + classification engine
-    ├── classification_engine.py                            # Shared engine (all connectors import this)
-    ├── classification_rules.json                           # Rules file (data stewards maintain this)
-    ├── purview_salesforce_connector_example.py             # Salesforce → Purview connector
-    ├── purview_netsuite_connector_example.py               # Oracle NetSuite → Purview connector
-    ├── purview_workday_connector_example.py                # Workday → Purview connector
-    └── purview_sql_custom_connector_example.py             # SQL Server → Purview custom connector
+├── CLAUDE.md                                               # Guidance for Claude Code
+├── classification_engine.py                                # Shared engine (all connectors import this)
+├── classification_rules.json                               # Rules file (data stewards maintain this)
+├── verify_classifications.py                               # Verifies rule classifications exist in Purview
+├── purview_salesforce_connector_example.py                 # Salesforce → Purview connector
+├── purview_netsuite_connector_example.py                   # Oracle NetSuite → Purview connector
+├── purview_workday_connector_example.py                    # Workday → Purview connector
+└── purview_sql_custom_connector_example.py                 # SQL Server → Purview custom connector
 ```
 
 ---
@@ -55,7 +56,7 @@ All four connectors have been updated to use the shared **Classification Engine*
 
 The classification engine separates "what to classify" from "how to classify":
 
-**`classification_rules.json`** — Maintained by data stewards (no Python knowledge required). Contains 52 rules across three layers:
+**`classification_rules.json`** — Maintained by data stewards (no Python knowledge required). Contains 67 rules across three layers:
 
 | Rule Layer | Priority | How It Matches | Example |
 |------------|----------|---------------|---------|
@@ -83,6 +84,15 @@ Run the built-in self-test: `python classification_engine.py`
 **To add a new classification rule:** Open `classification_rules.json`, add a rule entry, re-run the connector. No Python changes needed.
 
 **Important limitation:** This is rule-based classification (field names, types, object context), not content-based classification (inspecting actual data values). For content-level detection in SaaS sources, complement with Salesforce Shield Data Detect or Microsoft Defender for Cloud Apps.
+
+**Verifying classification names** — `verify_classifications.py` checks that every classification referenced in `classification_rules.json` exists as a typedef in your Purview account (Microsoft no longer publishes the formal `MICROSOFT.*` names, so the tenant's Atlas API is the only authoritative source):
+
+```bash
+# Live check (set PURVIEW_ACCOUNT_NAME + Service Principal env vars or use Managed Identity)
+python verify_classifications.py
+```
+
+It marks each name `OK` or `MISSING`, suggests tenant-valid alternatives for missing names (e.g. `MICROSOFT.PERSONAL.US.PHONE_NUMBER`), and exits non-zero if an enabled rule references a nonexistent classification — suitable as a CI gate. Without `PURVIEW_ACCOUNT_NAME` set, it lists the distinct names used for manual review. Run it after editing the rules file and before any live connector run.
 
 ---
 
