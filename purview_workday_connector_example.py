@@ -141,7 +141,11 @@ USAGE
 1. DRY-RUN MODE (default, no credentials needed):
        python purview_workday_connector_example.py
 
-2. LIVE MODE: Uncomment all "--- Uncomment for real usage ---" blocks, set env vars.
+2. LIVE MODE: Uncomment all "--- Uncomment for real usage ---" blocks (Workday side),
+   set env vars. Note: the Purview-side services (TypeDefService, EntityService,
+   LineageService, MetadataService) in this file are dry-run illustrations only —
+   port the live Purview API calls from purview_salesforce_connector_example.py,
+   which contains the full blocks.
 
 3. AZURE FUNCTIONS:
        import azure.functions as func
@@ -462,7 +466,6 @@ class WorkdayAuthService:
 
     def authenticate(self):
         # --- Uncomment for real usage ---
-        # import time
         # response = requests.post(self.config.token_url, data={
         #     "grant_type": "refresh_token", "client_id": self.config.client_id,
         #     "client_secret": self.config.client_secret, "refresh_token": self.config.refresh_token},

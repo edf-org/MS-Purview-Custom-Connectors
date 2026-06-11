@@ -291,8 +291,9 @@ REQUEST_TIMEOUT = (10, 30)
 def _validate_identifier(value: str, allow_list: list = None) -> str:
     """Validate that a string is a safe API/SOQL identifier.
 
-    Prevents injection by rejecting values containing dangerous characters
-    (semicolons, quotes, comments, whitespace other than underscores).
+    Prevents injection by allowing only letters, digits, and underscores —
+    rejecting dangerous characters such as semicolons, quotes, whitespace,
+    and SOQL comment sequences.
     Optionally validates against an explicit allow-list.
 
     Raises ValueError if the identifier is not safe.
@@ -334,7 +335,7 @@ def _validate_url_domain(url: str, expected_suffix: str) -> str:
 # 1. CONFIGURATION
 # =============================================================================
 
-SALESFORCE_API_VERSION = "v62.0"  # Spring '26 — update to match your org's version
+SALESFORCE_API_VERSION = "v62.0"  # Winter '25 — update to match your org's version
 
 # Which Salesforce objects to catalog. Set to None to discover all queryable objects.
 # For a targeted scan, list specific object API names:
@@ -642,7 +643,6 @@ class SalesforceDiscoveryService:
         Note: For large objects, consider using /limits/ endpoint instead.
         """
         # --- Uncomment for real usage ---
-        # import urllib.parse
         # _validate_identifier(object_name)  # Security: prevent SOQL injection
         # query = f"SELECT COUNT() FROM {object_name}"
         # url = f"{self.config.base_api_url}/query/?q={urllib.parse.quote(query)}"

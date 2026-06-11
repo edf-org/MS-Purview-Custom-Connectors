@@ -19,7 +19,7 @@ Environment Variables (set in .env file or system environment):
     PURVIEW_ACCOUNT_NAME  - Purview account name (without .purview.azure.com)
 
 Usage:
-    python purview_custom_connector_example.py
+    python purview_sql_custom_connector_example.py
 """
 
 import json
@@ -41,6 +41,7 @@ from classification_engine import ClassificationEngine
 # )
 # from azure.identity import DefaultAzureCredential
 # from dotenv import load_dotenv
+# import requests
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -274,7 +275,6 @@ class TypeDefService:
         logger.info("Registering custom type definitions...")
 
         # --- Uncomment for real usage ---
-        # import requests
         # token = self.auth.get_bearer_token()
         # headers = {
         #     "Authorization": f"Bearer {token}",
@@ -354,7 +354,6 @@ class EntityService:
             logger.info(f"Creating batch of {len(entities)} entities (batch {i // self.BATCH_SIZE + 1})...")
 
             # --- Uncomment for real usage ---
-            # import requests
             # token = self.auth.get_bearer_token()
             # headers = {
             #     "Authorization": f"Bearer {token}",
@@ -466,7 +465,6 @@ class LineageService:
         payload = {"entities": [process_entity]}
 
         # --- Uncomment for real usage ---
-        # import requests
         # token = self.auth.get_bearer_token()
         # headers = {
         #     "Authorization": f"Bearer {token}",
@@ -545,7 +543,6 @@ class MetadataService:
         logger.info(f"Applying business metadata to entity {entity_guid}...")
 
         # --- Uncomment for real usage ---
-        # import requests
         # token = self.auth.get_bearer_token()
         # headers = {
         #     "Authorization": f"Bearer {token}",
@@ -580,7 +577,6 @@ class MetadataService:
         classifications = [{"typeName": name} for name in classification_names]
 
         # --- Uncomment for real usage ---
-        # import requests
         # token = self.auth.get_bearer_token()
         # headers = {
         #     "Authorization": f"Bearer {token}",

@@ -25,7 +25,7 @@ class ClassificationEngine:
     def __init__(self, rules_path=None):
         if rules_path is None:
             rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "classification_rules.json")
-        # Resolve to an absolute path and reject traversal attempts.
+        # Resolve symlinks/relative segments to a canonical absolute path.
         rules_path = os.path.realpath(rules_path)
         if not os.path.exists(rules_path):
             raise FileNotFoundError(f"Rules not found: {rules_path}")

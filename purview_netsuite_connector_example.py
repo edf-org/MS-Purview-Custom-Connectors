@@ -186,7 +186,11 @@ USAGE
 
 2. LIVE MODE:
    a. Set up all prerequisites. b. Create Key Vault secrets. c. Set env vars.
-   d. Uncomment all "--- Uncomment for real usage ---" blocks.
+   d. Uncomment all "--- Uncomment for real usage ---" blocks (NetSuite side).
+      Note: the Purview-side services (TypeDefService, EntityService,
+      LineageService, MetadataService) in this file are dry-run illustrations
+      only — port the live Purview API calls from
+      purview_salesforce_connector_example.py, which contains the full blocks.
    e. Run: python purview_netsuite_connector_example.py
 
 3. AZURE FUNCTIONS DEPLOYMENT:
@@ -472,7 +476,9 @@ class NetSuiteAuthService:
         """Standard headers for NetSuite REST API calls."""
         return {
             "Content-Type": "application/json",
-            "Prefer": "respond-async",  # For large operations
+            # "respond-async" makes NetSuite return 202 + a polling URL, which this
+            # connector does not handle; the SuiteQL calls override it with "transient".
+            "Prefer": "respond-async",
         }
 
 
@@ -492,7 +498,8 @@ class NetSuiteDiscoveryService:
     - POST /services/rest/query/v1/suiteql
       Runs SuiteQL queries for record counts and data discovery.
 
-    Unlike Workday (which requires fetching sample records to discover fields),
+    Unlike Workday (whose connector example relies on a static OBJECT_METADATA
+    map because the REST API exposes no field-level metadata endpoint),
     NetSuite provides a dedicated Metadata Catalog endpoint based on OpenAPI 3.0
     that describes every field, sublist, and relationship for each record type.
     """
@@ -800,7 +807,7 @@ class NetSuiteConnector:
         # Step 1: Authenticate
         logger.info("\n--- Step 1: Authentication ---")
         purview_token = self.purview_auth.get_bearer_token()
-        self.ns_auth.get_auth()  # Validate OAuth credentials
+        self.ns_auth.get_auth()  # Build the OAuth1 signer (does not call NetSuite)
         purview_endpoint = self.purview_config.endpoint
 
         # Step 2: Register types
