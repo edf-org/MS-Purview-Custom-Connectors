@@ -3,6 +3,14 @@
 *.docx
 *.pptx
 
+# Python
+__pycache__/
+
+# Local tool and editor config
+.claude/
+.serena/
+.vscode/
+
 # Credential and secret files - NEVER commit these
 .env
 .env.*
