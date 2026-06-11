@@ -320,9 +320,11 @@ def _validate_url_domain(url: str, expected_suffix: str) -> str:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https":
         raise ValueError(f"URL '{url}' must use HTTPS.")
-    if not parsed.netloc.lower().endswith(expected_suffix):
+    # Use hostname (not netloc) so userinfo/port components cannot confuse the check.
+    host = (parsed.hostname or "").lower()
+    if not host.endswith(expected_suffix):
         raise ValueError(
-            f"URL '{url}' does not end with expected domain '{expected_suffix}'. "
+            f"URL '{url}' host does not end with expected domain '{expected_suffix}'. "
             f"Verify the value stored in Key Vault."
         )
     return url
@@ -590,7 +592,7 @@ class SalesforceDiscoveryService:
         logger.info(f"[DRY RUN] Discovered {len(simulated_objects)} Salesforce objects")
         return simulated_objects
 
-    def describe_object(self, object_name: str) -> dict:
+    def describe_object(self, object_name: str, allow_list: list = None) -> dict:
         """Get full metadata for a single Salesforce object via sObject Describe.
 
         Returns field-level detail including: name, label, type, length,
@@ -598,13 +600,16 @@ class SalesforceDiscoveryService:
 
         Args:
             object_name: The API name of the Salesforce object (e.g., "Account").
+            allow_list: Optional list of permitted object names (e.g., the list
+                        actually requested for this scan). When None, only the
+                        identifier-format check applies (scan-all mode).
 
         Returns:
             Full sObject Describe response dict.
         """
         # Validate the object name before using it in a URL — prevents SOQL/path injection
-        # if object names are ever sourced from external input rather than OBJECTS_TO_SCAN.
-        _validate_identifier(object_name, OBJECTS_TO_SCAN or None)
+        # if object names are ever sourced from external input.
+        _validate_identifier(object_name, allow_list)
 
         # --- Uncomment for real usage ---
         # url = f"{self.config.base_api_url}/sobjects/{object_name}/describe/"
@@ -1210,8 +1215,9 @@ class SalesforceConnector:
             obj_name = obj["name"]
             obj_label = obj["label"]
 
-            # Describe the object to get field-level metadata
-            describe_result = self.discovery.describe_object(obj_name)
+            # Describe the object to get field-level metadata.
+            # Allow-list is the list requested for this scan (None = scan-all mode).
+            describe_result = self.discovery.describe_object(obj_name, objects_to_scan)
             object_details[obj_name] = describe_result
 
             # Get record count (enrichment beyond what native connector provides)
@@ -1354,8 +1360,8 @@ class SalesforceConnector:
                 source="salesforce",
                 object_name=obj_name,
                 fields=obj_fields,
-                field_name_key="name",
-                field_type_key="type",
+                name_key="name",
+                type_key="type",
             )
 
             for field_name, classification_type in classifications.items():
@@ -1384,7 +1390,7 @@ class SalesforceConnector:
         logger.info(f"  Field entities:   {field_count}")
         logger.info(f"  Process entities: {len(process_entities)}")
         logger.info(f"  Total entities:   {len(all_entities) + len(process_entities)}")
-        logger.info(f"  PII fields classified: {len(pii_fields)}")
+        logger.info(f"  PII fields classified: {total_classified}")
 
 
 # =============================================================================

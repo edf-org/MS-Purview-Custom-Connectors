@@ -891,8 +891,8 @@ class NetSuiteConnector:
                 source="netsuite",
                 object_name=rec_name,
                 fields=rec_fields,
-                field_name_key="name",
-                field_type_key="type",
+                name_key="name",
+                type_key="type",
             )
 
             for field_name, classification_type in classifications.items():

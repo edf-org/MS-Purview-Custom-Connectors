@@ -261,8 +261,10 @@ class TypeDefService:
         ]
     }
 
-    def __init__(self, client):
+    def __init__(self, client, config: PurviewConfig, auth: AuthService):
         self.client = client
+        self.config = config
+        self.auth = auth
 
     def register_types(self) -> dict:
         """Register all custom type definitions in Purview.
@@ -273,13 +275,13 @@ class TypeDefService:
 
         # --- Uncomment for real usage ---
         # import requests
-        # token = auth_service.get_bearer_token()
+        # token = self.auth.get_bearer_token()
         # headers = {
         #     "Authorization": f"Bearer {token}",
         #     "Content-Type": "application/json",
         # }
         # response = requests.post(
-        #     f"{config.endpoint}/api/atlas/v2/types/typedefs",
+        #     f"{self.config.endpoint}/api/atlas/v2/types/typedefs",
         #     headers=headers,
         #     json=self.CUSTOM_TYPES,
         #     timeout=REQUEST_TIMEOUT,
@@ -316,9 +318,10 @@ class EntityService:
 
     BATCH_SIZE = 50  # Max entities per bulk API call
 
-    def __init__(self, client, config: PurviewConfig):
+    def __init__(self, client, config: PurviewConfig, auth: AuthService):
         self.client = client
         self.config = config
+        self.auth = auth
 
     def build_entity(self, asset: SourceAsset) -> dict:
         """Convert a SourceAsset into an Atlas entity payload."""
@@ -352,7 +355,7 @@ class EntityService:
 
             # --- Uncomment for real usage ---
             # import requests
-            # token = auth_service.get_bearer_token()
+            # token = self.auth.get_bearer_token()
             # headers = {
             #     "Authorization": f"Bearer {token}",
             #     "Content-Type": "application/json",
@@ -411,9 +414,10 @@ class LineageService:
     Each Process entity connects source entities to destination entities.
     """
 
-    def __init__(self, client, config: PurviewConfig):
+    def __init__(self, client, config: PurviewConfig, auth: AuthService):
         self.client = client
         self.config = config
+        self.auth = auth
 
     def create_lineage(self, relationship: LineageRelationship) -> dict:
         """Create a lineage process entity linking inputs to outputs.
@@ -463,7 +467,7 @@ class LineageService:
 
         # --- Uncomment for real usage ---
         # import requests
-        # token = auth_service.get_bearer_token()
+        # token = self.auth.get_bearer_token()
         # headers = {
         #     "Authorization": f"Bearer {token}",
         #     "Content-Type": "application/json",
@@ -518,8 +522,9 @@ class LineageService:
 class MetadataService:
     """Manages business metadata and classifications on entities."""
 
-    def __init__(self, config: PurviewConfig):
+    def __init__(self, config: PurviewConfig, auth: AuthService):
         self.config = config
+        self.auth = auth
 
     def apply_business_metadata(self, entity_guid: str, metadata: dict) -> dict:
         """Apply business metadata key-value pairs to an entity.
@@ -541,7 +546,7 @@ class MetadataService:
 
         # --- Uncomment for real usage ---
         # import requests
-        # token = auth_service.get_bearer_token()
+        # token = self.auth.get_bearer_token()
         # headers = {
         #     "Authorization": f"Bearer {token}",
         #     "Content-Type": "application/json",
@@ -576,7 +581,7 @@ class MetadataService:
 
         # --- Uncomment for real usage ---
         # import requests
-        # token = auth_service.get_bearer_token()
+        # token = self.auth.get_bearer_token()
         # headers = {
         #     "Authorization": f"Bearer {token}",
         #     "Content-Type": "application/json",
@@ -756,7 +761,7 @@ def main():
 
     # --- Step 2: Register custom type definitions ---
     logger.info("\n--- Step 2: Register Type Definitions ---")
-    typedef_service = TypeDefService(client)
+    typedef_service = TypeDefService(client, config, auth_service)
     typedef_service.register_types()
 
     # --- Step 3: Discover and create entities ---
@@ -764,19 +769,19 @@ def main():
     connector = SQLServerConnector(server_name="sql-prod-01.company.com", config=config)
     assets = connector.discover_assets()
 
-    entity_service = EntityService(client, config)
+    entity_service = EntityService(client, config, auth_service)
     entity_service.create_entities_bulk(assets)
 
     # --- Step 4: Create lineage ---
     logger.info("\n--- Step 4: Create Lineage ---")
-    lineage_service = LineageService(client, config)
+    lineage_service = LineageService(client, config, auth_service)
     lineage_relationships = connector.discover_lineage()
     for rel in lineage_relationships:
         lineage_service.create_lineage(rel)
 
     # --- Step 5: Apply business metadata ---
     logger.info("\n--- Step 5: Apply Business Metadata ---")
-    metadata_service = MetadataService(config)
+    metadata_service = MetadataService(config, auth_service)
 
     # In real usage, you'd use the GUID returned from entity creation
     sample_guid = "00000000-0000-0000-0000-000000000001"

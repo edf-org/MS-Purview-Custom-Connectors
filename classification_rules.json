@@ -97,10 +97,29 @@
             "enabled": true
         },
         {
-            "pattern": "*dob*",
+            "pattern": "dob",
             "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
             "priority": 15,
             "enabled": true
+        },
+        {
+            "pattern": "*_dob",
+            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+            "priority": 15,
+            "enabled": true
+        },
+        {
+            "pattern": "dob_*",
+            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+            "priority": 15,
+            "enabled": true
+        },
+        {
+            "pattern": "*_dob_*",
+            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+            "priority": 15,
+            "enabled": true,
+            "note": "The previous broad '*dob*' pattern matched unrelated fields (e.g. adobe_id). These word-boundary variants avoid those false positives."
         },
         {
             "pattern": "*street_address*",
@@ -225,10 +244,29 @@
             "enabled": true
         },
         {
-            "pattern": "*tin*",
+            "pattern": "tin",
             "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
             "priority": 15,
             "enabled": true
+        },
+        {
+            "pattern": "*_tin",
+            "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+            "priority": 15,
+            "enabled": true
+        },
+        {
+            "pattern": "tin_*",
+            "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+            "priority": 15,
+            "enabled": true
+        },
+        {
+            "pattern": "*_tin_*",
+            "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+            "priority": 15,
+            "enabled": true,
+            "note": "The previous broad '*tin*' pattern matched unrelated fields (e.g. marketing, accounting, routing, destination). These word-boundary variants avoid those false positives."
         },
         {
             "pattern": "*vat_number*",

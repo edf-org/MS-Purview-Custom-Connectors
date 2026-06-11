@@ -208,9 +208,11 @@ def _validate_url_domain(url: str, expected_suffix: str) -> str:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https":
         raise ValueError(f"URL '{url}' must use HTTPS.")
-    if not parsed.netloc.lower().endswith(expected_suffix):
+    # Use hostname (not netloc) so userinfo/port components cannot confuse the check.
+    host = (parsed.hostname or "").lower()
+    if not host.endswith(expected_suffix):
         raise ValueError(
-            f"URL '{url}' does not end with expected domain '{expected_suffix}'. "
+            f"URL '{url}' host does not end with expected domain '{expected_suffix}'. "
             f"Verify the value stored in Key Vault."
         )
     return url
@@ -679,8 +681,8 @@ class WorkdayConnector:
                 source="workday",
                 object_name=obj_name,
                 fields=obj_fields,
-                field_name_key="name",
-                field_type_key="type",
+                name_key="name",
+                type_key="type",
             )
 
             for field_name, classification_type in classifications.items():

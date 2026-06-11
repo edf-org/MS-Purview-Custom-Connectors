@@ -72,6 +72,9 @@ class ClassificationEngine:
                 raise ValueError(f"field_type_rules[{i}] missing keys: {missing}")
             if not isinstance(rule["priority"], (int, float)):
                 raise ValueError(f"field_type_rules[{i}] 'priority' must be numeric, got {type(rule['priority']).__name__}")
+            for key in ("type", "classification"):
+                if not isinstance(rule[key], str):
+                    raise ValueError(f"field_type_rules[{i}] '{key}' must be a string")
 
         for i, rule in enumerate(data["object_field_rules"]):
             missing = _EXACT_REQUIRED - rule.keys()
@@ -79,6 +82,9 @@ class ClassificationEngine:
                 raise ValueError(f"object_field_rules[{i}] missing keys: {missing}")
             if not isinstance(rule["priority"], (int, float)):
                 raise ValueError(f"object_field_rules[{i}] 'priority' must be numeric, got {type(rule['priority']).__name__}")
+            for key in ("source", "object", "field", "classification"):
+                if not isinstance(rule[key], str):
+                    raise ValueError(f"object_field_rules[{i}] '{key}' must be a string")
 
     def classify_field(self, source, object_name, field_name, field_type=None):
         matches = []
