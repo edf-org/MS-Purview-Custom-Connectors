@@ -4,7 +4,7 @@
  
 ## Project Repository
  
-This repository contains the Microsoft Purview Data Management Maturity Roadmap, the custom API architecture guide, the connector security review and its CI pipelines, the Defender for Cloud Apps setup guide, custom connector implementations, and the configuration-driven classification engine.
+This repository contains the Microsoft Purview Data Management Maturity Roadmap, the custom API architecture guide, the connector security review and its CI pipelines, custom connector implementations, and the configuration-driven classification engine.
  
 ---
  
@@ -12,10 +12,8 @@ This repository contains the Microsoft Purview Data Management Maturity Roadmap,
  
 ```
 ├── Microsoft_Purview_Data_Management_Maturity_Plan.md      # Roadmap — Markdown version (incl. DAMA, Batchelder, connector strategy)
-├── Microsoft_Purview_Data_Management_Maturity_Plan.pdf     # Roadmap — PDF version
 ├── Purview_Custom_API_Architecture.md                      # Architecture & Implementation Guide
 ├── Purview_Connector_Security_Review.md                    # Security review of the connector codebase (L1–L4 findings)
-├── Defender_Cloud_Apps_SaaS_Integration_Setup_Guide.docx   # MDCA (Layer 3 / CASB) setup guide for SaaS sources
 ├── ci_dependency_lock_github.yml                           # L4 remediation — dependency lock + SCA (GitHub Actions)
 ├── ci_dependency_lock_azure.yml                            # L4 remediation — dependency lock + SCA (Azure DevOps)
 ├── README.md                                                # This file
@@ -31,7 +29,7 @@ This repository contains the Microsoft Purview Data Management Maturity Roadmap,
  
 **Related deliverables maintained outside this repository:**
  
-- `Microsoft_Purview_Data_Management_Maturity_Plan.pptx` — the 36-slide master presentation (Executive Summary through DAMA DMBOK2 alignment, Batchelder best practices, and Custom Connector Strategy). The Word and PDF versions above carry the same content in document form.
+- `Microsoft_Purview_Data_Management_Maturity_Plan.pptx` — the 36-slide master presentation (Executive Summary through DAMA DMBOK2 alignment, Batchelder best practices, and Custom Connector Strategy). The Markdown version above carries the same content in document form.
 - `Data_Stewards_Briefing.pptx` — 8-slide briefing on the Data Steward role and the federated stewardship model.
 ---
  
@@ -66,12 +64,6 @@ python purview_rollback_scan_run.py --run-id <bad-run-id> --execute  # soft-dele
 ```
  
 If a bad run merely wrote wrong values onto existing entities, do **not** roll back — fix the connector and re-run; the upsert on `qualifiedName` overwrites the bad values. See **Purview_Connector_Setup_Quickstart.md** Phase 7 for the full decision tree, release tagging, and kill-switch procedure.
- 
----
- 
-### 🛡️ Defender for Cloud Apps Guide
- 
-**Defender_Cloud_Apps_SaaS_Integration_Setup_Guide.docx** is the Layer 3 (CASB) companion guide. Purview provides metadata governance (Layer 1) and the source system's native controls protect stored data (Layer 2); MDCA controls what moves in and out of the SaaS application — DLP enforcement, session controls, sensitivity-label awareness, threat detection, and SSPM. The guide covers licensing prerequisites, required roles, and step-by-step connector setup. Note: Salesforce has full governance support; Workday is supported for visibility/threat detection but currently without governance actions; NetSuite has no native MDCA connector.
  
 ---
  
@@ -123,7 +115,7 @@ Run the built-in self-test: `python classification_engine.py`
  
 **To add a new classification rule:** Open `classification_rules.json`, add a rule entry, re-run the connector. No Python changes needed. (Example: rule 1.1 added `*amount*` → `MICROSOFT.FINANCIAL.AMOUNT` so SQL `decimal` columns like `TotalAmount` classify correctly.)
  
-**Important limitation:** This is rule-based classification (field names, types, object context), not content-based classification (inspecting actual data values). For content-level detection in SaaS sources, complement with Salesforce Shield Data Detect or Microsoft Defender for Cloud Apps (see the MDCA guide above).
+**Important limitation:** This is rule-based classification (field names, types, object context), not content-based classification (inspecting actual data values). For content-level detection in SaaS sources, complement with Salesforce Shield Data Detect or Microsoft Defender for Cloud Apps.
  
 ---
  
