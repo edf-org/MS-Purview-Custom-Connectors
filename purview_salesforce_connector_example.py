@@ -264,6 +264,7 @@ import logging
 import os
 import re
 import sys
+import urllib.parse
 import uuid
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
@@ -304,7 +305,64 @@ logger = logging.getLogger(__name__)
 # =============================================================================
  
 # --- Security: default timeout for all HTTP requests (seconds) ---
+# Tuple format: (connect_timeout, read_timeout). Prevents indefinite hangs
+# if a remote service becomes unresponsive. Applied by _request_with_retry to
+# every call — source-side (Salesforce) and Purview-side alike.
 REQUEST_TIMEOUT = (10, 30)
+
+
+# Dry-run transport toggle. When true (the default for these examples), HTTP
+# calls are simulated by _DryRunResponse *through the same request path* used
+# in live mode — so identifier/URL validation, the timeout, and the
+# retry/backoff wrapper are all genuinely exercised without real credentials.
+# Live mode: set CONNECTOR_DRY_RUN=false and uncomment `import requests` above.
+DRY_RUN = os.environ.get("CONNECTOR_DRY_RUN", "true").strip().lower() != "false"
+
+
+# --- Input validation: SOQL/path injection + SSRF guards (ported from the
+# remote reference connector). These run on the live call path in front of the
+# retry wrapper, so a malicious object name or tampered domain URL fails before
+# any request is issued. ---
+
+def _validate_identifier(value: str, allow_list: list = None) -> str:
+    """Validate that a string is a safe API/SOQL identifier.
+
+    Prevents injection by allowing only letters, digits, and underscores —
+    rejecting semicolons, quotes, whitespace, and SOQL comment sequences.
+    Optionally validates against an explicit allow-list (e.g. the objects
+    actually requested for this scan). Raises ValueError if unsafe.
+    """
+    if allow_list and value not in allow_list:
+        raise ValueError(
+            f"Identifier '{value}' is not in the allow-list. "
+            f"Allowed values: {allow_list}"
+        )
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', value):
+        raise ValueError(
+            f"Identifier '{value}' contains invalid characters. "
+            f"Only alphanumeric characters and underscores are allowed."
+        )
+    return value
+
+
+def _validate_url_domain(url: str, expected_suffix: str) -> str:
+    """Validate that a URL uses HTTPS and its host ends with expected_suffix.
+
+    Prevents SSRF if a URL value retrieved from Key Vault has been tampered
+    with or misconfigured to point to an attacker-controlled host. Raises
+    ValueError if the URL fails validation.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"URL '{url}' must use HTTPS.")
+    # Use hostname (not netloc) so userinfo/port components cannot confuse the check.
+    host = (parsed.hostname or "").lower()
+    if not host.endswith(expected_suffix):
+        raise ValueError(
+            f"URL '{url}' host does not end with expected domain '{expected_suffix}'. "
+            f"Verify the value stored in Key Vault."
+        )
+    return url
  
  
 # --- M1: metadata sanitization (see Security Review) ---
@@ -353,23 +411,63 @@ def _sanitize_text(value, max_length: int = MAX_DESCRIPTION_LENGTH) -> str:
 MAX_RETRIES = 4
  
  
-def _request_with_retry(method: str, url: str, **kwargs):
-    """HTTP request with exponential backoff for live mode.
- 
+class _DryRunResponse:
+    """Minimal stand-in for requests.Response used in dry-run mode.
+
+    Lets the full request path — identifier/URL validation, the configured
+    timeout, and the retry/backoff wrapper — execute unchanged without a live
+    endpoint or the `requests` dependency. status_code is 200 so the wrapper's
+    success path runs; json() returns the simulated payload.
+    """
+
+    def __init__(self, payload, url: str, method: str, timeout):
+        self._payload = payload if payload is not None else {}
+        self.url = url
+        self.request_method = method
+        self.request_timeout = timeout  # the REQUEST_TIMEOUT that was applied
+        self.status_code = 200
+        self.headers = {}
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
+
+
+def _request_with_retry(method: str, url: str, dry_run_payload=None, **kwargs):
+    """HTTP request with exponential backoff, used for BOTH live and dry-run.
+
+    In live mode (DRY_RUN false) it calls requests.request; in dry-run it
+    returns a _DryRunResponse built from `dry_run_payload` (a value or zero-arg
+    callable), so the same validated, timed-out, retry-wrapped path is
+    exercised without live credentials or the requests dependency.
+
     Retries on 429 (honoring Retry-After — important for shared source-API
     quotas like Salesforce daily limits), transient 5xx, and connection or
-    timeout errors. Requires the `requests` import to be uncommented.
- 
-    Usage in live mode (replaces bare requests.get/post calls):
-        response = _request_with_retry("GET", url, headers=headers)
-        response = _request_with_retry("POST", url, json=payload, headers=headers)
+    timeout errors.
+
+    Usage (replaces bare requests.get/post calls):
+        response = _request_with_retry("GET", url, headers=headers,
+                                       dry_run_payload=lambda: {...})
     """
     import time
     import random
     kwargs.setdefault("timeout", REQUEST_TIMEOUT)
     for attempt in range(MAX_RETRIES + 1):
         try:
-            response = requests.request(method, url, **kwargs)  # noqa: F821 (live mode)
+            if DRY_RUN:
+                # Simulated transport: exercises identifier/URL validation, the
+                # timeout, and this retry/backoff wrapper without a live
+                # endpoint. The timeout that would be sent is logged and carried
+                # on the response so it is demonstrably applied.
+                logger.info(
+                    f"[DRY RUN] {method} {url.split('?')[0]} (timeout={kwargs['timeout']})"
+                )
+                payload = dry_run_payload() if callable(dry_run_payload) else dry_run_payload
+                response = _DryRunResponse(payload, url, method, kwargs["timeout"])
+            else:
+                response = requests.request(method, url, **kwargs)  # noqa: F821 (live mode)
             if response.status_code == 429 or 500 <= response.status_code < 600:
                 if attempt == MAX_RETRIES:
                     response.raise_for_status()
@@ -654,6 +752,11 @@ class SalesforceConfig:
     def base_api_url(self) -> str:
         """Base URL for Salesforce REST API calls."""
         url = self.instance_url or self.domain_url
+        # SSRF guard: ensure the URL points to a Salesforce-owned domain. This
+        # prevents a misconfigured or tampered Key Vault secret (domain-url)
+        # from redirecting authenticated requests to an attacker-controlled
+        # host. Runs on every call because base_api_url is recomputed per use.
+        _validate_url_domain(url, ".salesforce.com")
         return f"{url}/services/data/{self.api_version}"
  
  
@@ -788,25 +891,44 @@ class SalesforceDiscoveryService:
         # logger.info(f"Discovered {len(objects)} Salesforce objects")
         # return objects
  
-        # --- Dry run: return simulated metadata ---
-        logger.info(f"[DRY RUN] Would call GET {self.config.base_api_url}/sobjects/")
-        simulated_objects = []
-        for name in (object_filter or OBJECTS_TO_SCAN):
-            simulated_objects.append({
-                "name": name,
-                "label": name.replace("2", "").replace("_", " "),
-                "labelPlural": f"{name}s",
-                "custom": name.endswith("__c"),
-                "queryable": True,
-                "createable": True,
-                "updateable": True,
-                "deletable": True,
-                "keyPrefix": f"{name[:3].upper()}",
-            })
-        logger.info(f"[DRY RUN] Discovered {len(simulated_objects)} Salesforce objects")
-        return simulated_objects
+        # Build the URL (base_api_url runs the _validate_url_domain SSRF guard)
+        # and issue it through the retry/timeout wrapper. In dry-run the wrapper
+        # returns the simulated Describe Global payload produced below; in live
+        # mode the same call hits Salesforce.
+        url = f"{self.config.base_api_url}/sobjects/"
+
+        def _simulate():
+            objects = []
+            for name in (object_filter or OBJECTS_TO_SCAN):
+                objects.append({
+                    "name": name,
+                    "label": name.replace("2", "").replace("_", " "),
+                    "labelPlural": f"{name}s",
+                    "custom": name.endswith("__c"),
+                    "queryable": True,
+                    "createable": True,
+                    "updateable": True,
+                    "deletable": True,
+                    "keyPrefix": f"{name[:3].upper()}",
+                })
+            return {"sobjects": objects}
+
+        response = _request_with_retry(
+            "GET", url, headers=self.auth.get_headers(), dry_run_payload=_simulate
+        )
+        all_objects = response.json()["sobjects"]
+
+        # Filter to queryable, non-deprecated objects (identical to live mode)
+        objects = [
+            obj for obj in all_objects
+            if obj.get("queryable", False) and not obj.get("deprecatedAndHidden", False)
+        ]
+        if object_filter:
+            objects = [obj for obj in objects if obj["name"] in object_filter]
+        logger.info(f"Discovered {len(objects)} Salesforce objects")
+        return objects
  
-    def describe_object(self, object_name: str) -> dict:
+    def describe_object(self, object_name: str, allow_list: list = None) -> dict:
         """Get full metadata for a single Salesforce object via sObject Describe.
  
         Returns field-level detail including: name, label, type, length,
@@ -818,29 +940,34 @@ class SalesforceDiscoveryService:
         Returns:
             Full sObject Describe response dict.
         """
-        # --- Uncomment for real usage ---
-        # url = f"{self.config.base_api_url}/sobjects/{object_name}/describe/"
-        # response = requests.get(url, headers=self.auth.get_headers())
-        # response.raise_for_status()
-        # describe_result = response.json()
-        # logger.info(
-        #     f"Described {object_name}: {len(describe_result.get('fields', []))} fields, "
-        #     f"{len(describe_result.get('childRelationships', []))} child relationships"
-        # )
-        # return describe_result
+        # Validate the object name before it goes into a URL/SOQL — prevents
+        # path/SOQL injection if object names are ever sourced from external
+        # input. Runs in front of the retry wrapper so a bad name never issues
+        # a request. allow_list, when supplied, restricts to this scan's objects.
+        _validate_identifier(object_name, allow_list)
+
+        # Build the URL (base_api_url runs the _validate_url_domain SSRF guard)
+        # and issue it through the retry/timeout wrapper.
+        url = f"{self.config.base_api_url}/sobjects/{object_name}/describe/"
+
+        def _simulate():
+            return {
+                "name": object_name,
+                "label": object_name.replace("2", "").replace("_", " "),
+                "fields": self._get_simulated_fields(object_name),
+                "childRelationships": [],
+                "recordTypeInfos": [],
+            }
  
-        # --- Dry run: return simulated field metadata ---
-        logger.info(f"[DRY RUN] Would call GET {self.config.base_api_url}/sobjects/{object_name}/describe/")
-        simulated_fields = self._get_simulated_fields(object_name)
-        result = {
-            "name": object_name,
-            "label": object_name.replace("2", "").replace("_", " "),
-            "fields": simulated_fields,
-            "childRelationships": [],
-            "recordTypeInfos": [],
-        }
-        logger.info(f"[DRY RUN] Described {object_name}: {len(simulated_fields)} fields")
-        return result
+        response = _request_with_retry(
+            "GET", url, headers=self.auth.get_headers(), dry_run_payload=_simulate
+        )
+        describe_result = response.json()
+        logger.info(
+            f"Described {object_name}: {len(describe_result.get('fields', []))} fields, "
+            f"{len(describe_result.get('childRelationships', []))} child relationships"
+        )
+        return describe_result
  
     def get_record_count(self, object_name: str) -> int:
         """Get the approximate record count for an object via SOQL.
@@ -848,21 +975,23 @@ class SalesforceDiscoveryService:
         Uses SELECT COUNT() FROM {ObjectName} — returns an integer.
         Note: For large objects, consider using /limits/ endpoint instead.
         """
-        # --- Uncomment for real usage ---
-        # import urllib.parse
-        # query = f"SELECT COUNT() FROM {object_name}"
-        # url = f"{self.config.base_api_url}/query/?q={urllib.parse.quote(query)}"
-        # response = requests.get(url, headers=self.auth.get_headers())
-        # response.raise_for_status()
-        # return response.json().get("totalSize", 0)
+        # Validate the object name (SOQL injection guard) before it is
+        # interpolated into the COUNT() query, then issue the request through
+        # the retry/timeout wrapper.
+        _validate_identifier(object_name)
+        query = f"SELECT COUNT() FROM {object_name}"
+        url = f"{self.config.base_api_url}/query/?q={urllib.parse.quote(query)}"
  
-        # --- Dry run ---
         simulated_counts = {
             "Account": 12500, "Contact": 34200, "Opportunity": 8750,
             "Lead": 15600, "Case": 22100, "Campaign": 340,
             "Order": 5200, "Product2": 890, "Pricebook2": 12, "Contract": 1100,
         }
-        return simulated_counts.get(object_name, 0)
+        response = _request_with_retry(
+            "GET", url, headers=self.auth.get_headers(),
+            dry_run_payload=lambda: {"totalSize": simulated_counts.get(object_name, 0)},
+        )
+        return response.json().get("totalSize", 0)
  
     def _get_simulated_fields(self, object_name: str) -> list:
         """Return simulated field metadata for dry-run mode."""
@@ -1137,19 +1266,19 @@ class TypeDefService:
         Types are idempotent — re-registering updates existing types.
         """
         url = f"{purview_endpoint}/api/atlas/v2/types/typedefs"
-        # --- Uncomment for real usage ---
-        # headers = {
-        #     "Authorization": f"Bearer {bearer_token}",
-        #     "Content-Type": "application/json",
-        # }
-        # response = requests.post(url, json=TypeDefService.SALESFORCE_TYPES, headers=headers)
-        # response.raise_for_status()
-        # logger.info("Salesforce custom types registered successfully")
-        # return response.json()
+        headers = {
+            "Authorization": f"Bearer {bearer_token}",
+            "Content-Type": "application/json",
+        }
  
         type_names = [t["name"] for t in TypeDefService.SALESFORCE_TYPES["entityDefs"]]
-        logger.info(f"[DRY RUN] Would POST to {url}")
-        logger.info(f"[DRY RUN] Would register {len(type_names)} types: {type_names}")
+        # Idempotent registration through the retry/timeout wrapper (re-running
+        # updates existing types). In dry-run the wrapper echoes the type set.
+        _request_with_retry(
+            "POST", url, json=TypeDefService.SALESFORCE_TYPES, headers=headers,
+            dry_run_payload=lambda: TypeDefService.SALESFORCE_TYPES,
+        )
+        logger.info(f"Registered {len(type_names)} Salesforce types: {type_names}")
         return TypeDefService.SALESFORCE_TYPES
  
  
@@ -1221,17 +1350,21 @@ class EntityService:
             batch = entities[i : i + EntityService.BATCH_SIZE]
             payload = {"entities": batch}
  
-            # --- Uncomment for real usage ---
-            # headers = {
-            #     "Authorization": f"Bearer {bearer_token}",
-            #     "Content-Type": "application/json",
-            # }
-            # response = requests.post(url, json=payload, headers=headers)
-            # response.raise_for_status()
-            # results.append(response.json())
+            headers = {
+                "Authorization": f"Bearer {bearer_token}",
+                "Content-Type": "application/json",
+            }
  
             batch_names = [e["attributes"]["qualifiedName"] for e in batch]
-            logger.info(f"[DRY RUN] Would POST batch of {len(batch)} entities to {url}")
+            # Push the batch through the retry/timeout wrapper (entities are
+            # upserted by qualifiedName — safe to re-run). In dry-run the
+            # wrapper returns a synthetic mutation result.
+            result = _request_with_retry(
+                "POST", url, json=payload, headers=headers,
+                dry_run_payload=lambda names=batch_names: {"mutatedEntities": {}, "qualifiedNames": names},
+            )
+            results.append(result.json())
+            logger.info(f"POSTed batch of {len(batch)} entities to {url}")
             for name in batch_names:
                 logger.info(f"  → {name}")
  
@@ -1333,15 +1466,16 @@ class MetadataService:
             metadata: Dict of {BusinessMetadataTypeName: {attribute: value}}
         """
         url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/businessmetadata?isOverwrite=true"
-        # --- Uncomment for real usage ---
-        # headers = {
-        #     "Authorization": f"Bearer {bearer_token}",
-        #     "Content-Type": "application/json",
-        # }
-        # response = requests.post(url, json=metadata, headers=headers)
-        # response.raise_for_status()
+        headers = {
+            "Authorization": f"Bearer {bearer_token}",
+            "Content-Type": "application/json",
+        }
  
-        logger.info(f"[DRY RUN] Would apply business metadata to entity {entity_guid}: {metadata}")
+        _request_with_retry(
+            "POST", url, json=metadata, headers=headers,
+            dry_run_payload=lambda: {"guid": entity_guid},
+        )
+        logger.info(f"Applied business metadata to entity {entity_guid}: {metadata}")
  
     @staticmethod
     def apply_classification(
@@ -1356,15 +1490,16 @@ class MetadataService:
         """
         url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/classifications"
         payload = [{"typeName": classification_name}]
-        # --- Uncomment for real usage ---
-        # headers = {
-        #     "Authorization": f"Bearer {bearer_token}",
-        #     "Content-Type": "application/json",
-        # }
-        # response = requests.post(url, json=payload, headers=headers)
-        # response.raise_for_status()
+        headers = {
+            "Authorization": f"Bearer {bearer_token}",
+            "Content-Type": "application/json",
+        }
  
-        logger.info(f"[DRY RUN] Would apply classification '{classification_name}' to entity {entity_guid}")
+        _request_with_retry(
+            "POST", url, json=payload, headers=headers,
+            dry_run_payload=lambda: {"guid": entity_guid},
+        )
+        logger.info(f"Applied classification '{classification_name}' to entity {entity_guid}")
  
  
 # =============================================================================
@@ -1459,8 +1594,10 @@ class SalesforceConnector:
             obj_name = _safe_name_component(obj["name"])  # M1: untrusted source metadata
             obj_label = obj["label"]
  
-            # Describe the object to get field-level metadata
-            describe_result = self.discovery.describe_object(obj_name)
+            # Describe the object to get field-level metadata. Pass the scan's
+            # object list as the allow-list so describe_object rejects any name
+            # outside the requested set (None in scan-all mode).
+            describe_result = self.discovery.describe_object(obj_name, objects_to_scan)
             object_details[obj_name] = describe_result
  
             # Get record count (enrichment beyond what native connector provides)
