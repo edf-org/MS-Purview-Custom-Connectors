@@ -86,7 +86,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
  
 # --- Security: default timeout for all HTTP requests (seconds) ---
+# Tuple format: (connect_timeout, read_timeout). Applied by _request_with_retry
+# to every Purview request.
 REQUEST_TIMEOUT = (10, 30)
+
+# Dry-run transport toggle. When true (the default for these examples), HTTP
+# calls are simulated by _DryRunResponse *through the same request path* used in
+# live mode — so identifier validation, the timeout, the bearer token, and the
+# retry/backoff wrapper are all genuinely exercised without real credentials.
+# Live mode: set CONNECTOR_DRY_RUN=false and uncomment `import requests`.
+DRY_RUN = os.environ.get("CONNECTOR_DRY_RUN", "true").strip().lower() != "false"
  
 def _validate_identifier(value: str, allow_list: list = None) -> str:
     """Validate that a string is a safe SQL/API identifier."""
@@ -143,23 +152,58 @@ def _sanitize_text(value, max_length: int = MAX_DESCRIPTION_LENGTH) -> str:
 MAX_RETRIES = 4
  
  
-def _request_with_retry(method: str, url: str, **kwargs):
-    """HTTP request with exponential backoff for live mode.
+class _DryRunResponse:
+    """Minimal stand-in for requests.Response used in dry-run mode.
+
+    Lets the full request path — bearer token, the configured timeout, and the
+    retry/backoff wrapper — execute unchanged without a live endpoint or the
+    `requests` dependency. status_code is 200 so the wrapper's success path
+    runs; json() returns the simulated payload.
+    """
+
+    def __init__(self, payload, url: str, method: str, timeout):
+        self._payload = payload if payload is not None else {}
+        self.url = url
+        self.request_method = method
+        self.request_timeout = timeout  # the REQUEST_TIMEOUT that was applied
+        self.status_code = 200
+        self.headers = {}
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
+
+
+def _request_with_retry(method: str, url: str, dry_run_payload=None, **kwargs):
+    """HTTP request with exponential backoff, used for BOTH live and dry-run.
  
-    Retries on 429 (honoring Retry-After — important for shared source-API
-    quotas like Salesforce daily limits), transient 5xx, and connection or
-    timeout errors. Requires the `requests` import to be uncommented.
+    Retries on 429 (honoring Retry-After), transient 5xx, and connection or
+    timeout errors. In live mode (DRY_RUN false) it calls requests.request; in
+    dry-run it returns a _DryRunResponse from `dry_run_payload` (value or
+    zero-arg callable), exercising the same timed-out, retry-wrapped path.
  
-    Usage in live mode (replaces bare requests.get/post calls):
-        response = _request_with_retry("GET", url, headers=headers)
-        response = _request_with_retry("POST", url, json=payload, headers=headers)
+    Usage (replaces bare requests.get/post calls):
+        response = _request_with_retry("POST", url, json=payload,
+                                       headers=headers, dry_run_payload=lambda: {...})
     """
     import time
     import random
     kwargs.setdefault("timeout", REQUEST_TIMEOUT)
     for attempt in range(MAX_RETRIES + 1):
         try:
-            response = requests.request(method, url, **kwargs)  # noqa: F821 (live mode)
+            if DRY_RUN:
+                # Simulated transport: exercises the bearer token, timeout, and
+                # this retry/backoff wrapper without a live endpoint. The timeout
+                # that would be sent is logged and carried on the response.
+                logger.info(
+                    f"[DRY RUN] {method} {url.split('?')[0]} (timeout={kwargs['timeout']})"
+                )
+                payload = dry_run_payload() if callable(dry_run_payload) else dry_run_payload
+                response = _DryRunResponse(payload, url, method, kwargs["timeout"])
+            else:
+                response = requests.request(method, url, **kwargs)  # noqa: F821 (live mode)
             if response.status_code == 429 or 500 <= response.status_code < 600:
                 if attempt == MAX_RETRIES:
                     response.raise_for_status()
@@ -575,8 +619,10 @@ class TypeDefService:
         _t["attributeDefs"].append(dict(_SOURCE_OF_TRUTH_ATTR))
     del _t
  
-    def __init__(self, client):
+    def __init__(self, client, config: PurviewConfig, auth: AuthService):
         self.client = client
+        self.config = config
+        self.auth = auth
  
     def register_types(self) -> dict:
         """Register all custom type definitions in Purview.
@@ -585,23 +631,19 @@ class TypeDefService:
         """
         logger.info("Registering custom type definitions...")
  
-        # --- Uncomment for real usage ---
-        # import requests
-        # token = auth_service.get_bearer_token()
-        # headers = {
-        #     "Authorization": f"Bearer {token}",
-        #     "Content-Type": "application/json",
-        # }
-        # response = _request_with_retry("POST", 
-        #     f"{config.endpoint}/api/atlas/v2/types/typedefs",
-        #     headers=headers,
-        #     json=self.CUSTOM_TYPES,
-        #     timeout=REQUEST_TIMEOUT,
-        # )
-        # response.raise_for_status()
-        # return response.json()
- 
-        logger.info(f"[DRY RUN] Would register {len(self.CUSTOM_TYPES['entityDefs'])} type definitions:")
+        # Compose the real call path: bearer token -> validated endpoint ->
+        # retry/timeout wrapper. In dry-run the wrapper echoes CUSTOM_TYPES.
+        token = self.auth.get_bearer_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        url = f"{self.config.endpoint}/api/atlas/v2/types/typedefs"
+        _request_with_retry(
+            "POST", url, headers=headers, json=self.CUSTOM_TYPES,
+            dry_run_payload=lambda: self.CUSTOM_TYPES,
+        )
+        logger.info(f"Registered {len(self.CUSTOM_TYPES['entityDefs'])} type definitions:")
         for td in self.CUSTOM_TYPES["entityDefs"]:
             logger.info(f"  - {td['name']} (superType: {td['superTypes'][0]})")
         return self.CUSTOM_TYPES
@@ -630,9 +672,10 @@ class EntityService:
  
     BATCH_SIZE = 50  # Max entities per bulk API call
  
-    def __init__(self, client, config: PurviewConfig):
+    def __init__(self, client, config: PurviewConfig, auth: AuthService):
         self.client = client
         self.config = config
+        self.auth = auth
  
     def build_entity(self, asset: SourceAsset) -> dict:
         """Convert a SourceAsset into an Atlas entity payload."""
@@ -640,7 +683,8 @@ class EntityService:
             "typeName": asset.entity_type,
             "attributes": {
                 "qualifiedName": asset.qualified_name,
-                "name": asset.name,
+                # M1: source-derived name is untrusted metadata
+                "name": _sanitize_text(asset.name, MAX_NAME_COMPONENT_LENGTH),
                 "scanRunId": SCAN_RUN_ID,  # rollback support
                 "sourceOfTruth": SOURCE_OF_TRUTH,  # provenance (Security Review 8.2)
                 **asset.attributes,
@@ -666,22 +710,6 @@ class EntityService:
  
             logger.info(f"Creating batch of {len(entities)} entities (batch {i // self.BATCH_SIZE + 1})...")
  
-            # --- Uncomment for real usage ---
-            # import requests
-            # token = auth_service.get_bearer_token()
-            # headers = {
-            #     "Authorization": f"Bearer {token}",
-            #     "Content-Type": "application/json",
-            # }
-            # response = _request_with_retry("POST", 
-            #     f"{self.config.endpoint}/api/atlas/v2/entity/bulk",
-            #     headers=headers,
-            #     json=payload,
-            #     timeout=REQUEST_TIMEOUT,
-            # )
-            # response.raise_for_status()
-            # results.append(response.json())
- 
             # --- Alternative using pyapacheatlas ---
             # atlas_entities = [
             #     AtlasEntity(
@@ -695,10 +723,22 @@ class EntityService:
             # result = self.client.upload_entities(atlas_entities)
             # results.append(result)
  
-            logger.info(f"[DRY RUN] Would create {len(entities)} entities:")
+            # Compose the real call path: bearer token -> validated endpoint ->
+            # retry/timeout wrapper. Entities upsert by qualifiedName (safe to
+            # re-run). In dry-run the wrapper echoes the batch payload.
+            token = self.auth.get_bearer_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+            url = f"{self.config.endpoint}/api/atlas/v2/entity/bulk"
+            response = _request_with_retry(
+                "POST", url, headers=headers, json=payload,
+                dry_run_payload=lambda p=payload: p,
+            )
             for e in entities:
                 logger.info(f"  - [{e['typeName']}] {e['attributes']['qualifiedName']}")
-            results.append(payload)
+            results.append(response.json())
  
         return results
  
@@ -727,9 +767,10 @@ class LineageService:
     Each Process entity connects source entities to destination entities.
     """
  
-    def __init__(self, client, config: PurviewConfig):
+    def __init__(self, client, config: PurviewConfig, auth: AuthService):
         self.client = client
         self.config = config
+        self.auth = auth
  
     def create_lineage(self, relationship: LineageRelationship) -> dict:
         """Create a lineage process entity linking inputs to outputs.
@@ -772,22 +813,6 @@ class LineageService:
  
         payload = {"entities": [process_entity]}
  
-        # --- Uncomment for real usage ---
-        # import requests
-        # token = auth_service.get_bearer_token()
-        # headers = {
-        #     "Authorization": f"Bearer {token}",
-        #     "Content-Type": "application/json",
-        # }
-        # response = _request_with_retry("POST", 
-        #     f"{self.config.endpoint}/api/atlas/v2/entity/bulk",
-        #     headers=headers,
-        #     json=payload,
-        #     timeout=REQUEST_TIMEOUT,
-        # )
-        # response.raise_for_status()
-        # return response.json()
- 
         # --- Alternative using pyapacheatlas ---
         # process = AtlasProcess(
         #     name=relationship.process_name,
@@ -813,13 +838,25 @@ class LineageService:
         # )
         # return self.client.upload_entities([process])
  
-        logger.info("[DRY RUN] Would create lineage process entity:")
+        # Compose the real call path: bearer token -> validated endpoint ->
+        # retry/timeout wrapper. In dry-run the wrapper echoes the payload.
+        token = self.auth.get_bearer_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        url = f"{self.config.endpoint}/api/atlas/v2/entity/bulk"
+        response = _request_with_retry(
+            "POST", url, headers=headers, json=payload,
+            dry_run_payload=lambda: payload,
+        )
+        logger.info("Created lineage process entity:")
         logger.info(f"  Process: {relationship.process_qualified_name}")
         for qn in relationship.input_qualified_names:
             logger.info(f"  Input:   {qn}")
         for qn in relationship.output_qualified_names:
             logger.info(f"  Output:  {qn}")
-        return payload
+        return response.json()
  
  
 # =============================================================================
@@ -829,9 +866,10 @@ class LineageService:
 class MetadataService:
     """Manages business metadata and classifications on entities."""
  
-    def __init__(self, config: PurviewConfig):
+    def __init__(self, config: PurviewConfig, auth: AuthService):
         self.config = config
- 
+        self.auth = auth
+
     def apply_business_metadata(self, entity_guid: str, metadata: dict) -> dict:
         """Apply business metadata key-value pairs to an entity.
  
@@ -850,24 +888,18 @@ class MetadataService:
         """
         logger.info(f"Applying business metadata to entity {entity_guid}...")
  
-        # --- Uncomment for real usage ---
-        # import requests
-        # token = auth_service.get_bearer_token()
-        # headers = {
-        #     "Authorization": f"Bearer {token}",
-        #     "Content-Type": "application/json",
-        # }
-        # response = _request_with_retry("POST", 
-        #     f"{self.config.endpoint}/api/atlas/v2/entity/guid/{entity_guid}"
-        #     f"/businessmetadata?isOverwrite=true",
-        #     headers=headers,
-        #     json=metadata,
-        #     timeout=REQUEST_TIMEOUT,
-        # )
-        # response.raise_for_status()
-        # return response.json()
- 
-        logger.info(f"[DRY RUN] Would apply business metadata to {entity_guid}:")
+        token = self.auth.get_bearer_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        url = (f"{self.config.endpoint}/api/atlas/v2/entity/guid/{entity_guid}"
+               f"/businessmetadata?isOverwrite=true")
+        _request_with_retry(
+            "POST", url, headers=headers, json=metadata,
+            dry_run_payload=lambda: metadata,
+        )
+        logger.info(f"Applied business metadata to {entity_guid}:")
         logger.info(f"  {json.dumps(metadata, indent=2)}")
         return metadata
  
@@ -882,23 +914,17 @@ class MetadataService:
  
         classifications = [{"typeName": name} for name in classification_names]
  
-        # --- Uncomment for real usage ---
-        # import requests
-        # token = auth_service.get_bearer_token()
-        # headers = {
-        #     "Authorization": f"Bearer {token}",
-        #     "Content-Type": "application/json",
-        # }
-        # response = _request_with_retry("POST", 
-        #     f"{self.config.endpoint}/api/atlas/v2/entity/guid/{entity_guid}/classifications",
-        #     headers=headers,
-        #     json=classifications,
-        #     timeout=REQUEST_TIMEOUT,
-        # )
-        # response.raise_for_status()
-        # return response.json()
- 
-        logger.info(f"[DRY RUN] Would apply classifications: {classification_names}")
+        token = self.auth.get_bearer_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        url = f"{self.config.endpoint}/api/atlas/v2/entity/guid/{entity_guid}/classifications"
+        _request_with_retry(
+            "POST", url, headers=headers, json=classifications,
+            dry_run_payload=lambda: {"classifications": classifications},
+        )
+        logger.info(f"Applied classifications: {classification_names}")
         return {"classifications": classifications}
  
  
@@ -965,7 +991,12 @@ class SQLServerConnector:
             {"name": "Customers", "schema": "dbo", "rows": 50000},
             {"name": "Products", "schema": "dbo", "rows": 2000},
         ]
+        # LLM10: cap table discovery breadth (env-configurable; skips logged)
+        tables = _apply_cap(tables, MAX_OBJECTS_PER_RUN, "SQL tables")
         for t in tables:
+            # Validate SQL identifiers before they enter qualifiedNames/queries
+            _validate_identifier(t["name"])
+            _validate_identifier(t["schema"])
             assets.append(SourceAsset(
                 name=t["name"],
                 qualified_name=self._qualified_name(db_name, t["schema"], t["name"]),
@@ -996,13 +1027,20 @@ class SQLServerConnector:
             {"name": "TotalAmount", "type": "decimal(18,2)", "nullable": True, "pk": False},
         ]
  
-        # Classify all columns in the table using the shared engine
+        # LLM10: cap per-table column breadth; validate each column identifier
+        columns = _apply_cap(columns, MAX_FIELDS_PER_OBJECT, "columns on Orders")
+        for col in columns:
+            _validate_identifier(col["name"])
+
+        # Classify all columns in the table using the shared engine.
+        # Use the canonical name_key/type_key kwargs (supported by BOTH engine
+        # versions) so this connector is not coupled to the field_name_key alias.
         col_classifications = classification_engine.classify_fields(
             source="sql",
             object_name="Orders",
             fields=columns,
-            field_name_key="name",
-            field_type_key="type",
+            name_key="name",
+            type_key="type",
         )
  
         for col in columns:
@@ -1076,7 +1114,7 @@ def main():
  
     # --- Step 2: Register custom type definitions ---
     logger.info("\n--- Step 2: Register Type Definitions ---")
-    typedef_service = TypeDefService(client)
+    typedef_service = TypeDefService(client, config, auth_service)
     typedef_service.register_types()
  
     # --- Step 3: Discover and create entities ---
@@ -1090,19 +1128,19 @@ def main():
         for a in assets
     )
  
-    entity_service = EntityService(client, config)
+    entity_service = EntityService(client, config, auth_service)
     entity_service.create_entities_bulk(assets)
  
     # --- Step 4: Create lineage ---
     logger.info("\n--- Step 4: Create Lineage ---")
-    lineage_service = LineageService(client, config)
+    lineage_service = LineageService(client, config, auth_service)
     lineage_relationships = connector.discover_lineage()
     for rel in lineage_relationships:
         lineage_service.create_lineage(rel)
  
     # --- Step 5: Apply business metadata ---
     logger.info("\n--- Step 5: Apply Business Metadata ---")
-    metadata_service = MetadataService(config)
+    metadata_service = MetadataService(config, auth_service)
  
     # In real usage, you'd use the GUID returned from entity creation
     sample_guid = "00000000-0000-0000-0000-000000000001"
