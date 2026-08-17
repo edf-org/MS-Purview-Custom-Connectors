@@ -1,0 +1,69 @@
+# =============================================================================
+# L4 (see Purview Connector Security Review): dependency lock + SCA pipeline
+# GitHub Actions version — place at .github/workflows/dependency-lock.yml
+# =============================================================================
+# What it does:
+#   1. Generates a hash-pinned lock file (requirements.txt) from requirements.in
+#   2. Runs an SCA scan (pip-audit) against the resolved dependency set
+#   3. Verifies a clean install with hash enforcement (--require-hashes)
+#   4. Uploads the lock file as a build artifact (commit it to the repo after
+#      review, or open a PR with it — see the optional step at the bottom)
+#
+# Trigger model: on changes to requirements.in, weekly (to catch newly
+# disclosed CVEs in unchanged dependencies), and on demand.
+ 
+name: Dependency lock and audit
+ 
+on:
+  push:
+    paths:
+      - "requirements.in"
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC — re-audit unchanged deps
+  workflow_dispatch:
+ 
+permissions:
+  contents: read
+ 
+jobs:
+  lock-and-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+ 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # match your Azure Functions runtime
+ 
+      - name: Install tooling
+        run: pip install pip-tools pip-audit
+ 
+      - name: Generate hash-pinned lock file
+        run: pip-compile --generate-hashes requirements.in -o requirements.txt
+ 
+      - name: SCA scan against the lock file
+        # Fails the build on any known vulnerability in the resolved set.
+        # Add `--ignore-vuln <ID>` only with a documented risk acceptance.
+        run: pip-audit -r requirements.txt --require-hashes
+ 
+      - name: Verify hash-enforced install
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --require-hashes -r requirements.txt
+ 
+      - name: Upload lock file artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: requirements-lock
+          path: requirements.txt
+ 
+      # Optional: open a PR with the refreshed lock file so the diff is
+      # reviewed before it lands (requires a token with contents:write).
+      # - name: Create pull request with updated lock file
+      #   uses: peter-evans/create-pull-request@v6
+      #   with:
+      #     commit-message: "chore(deps): refresh hash-pinned lock file"
+      #     title: "Refresh dependency lock file"
+      #     branch: chore/dependency-lock
+      #     add-paths: requirements.txt
+ 
