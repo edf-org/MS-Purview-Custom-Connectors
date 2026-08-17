@@ -254,7 +254,47 @@ logger = logging.getLogger(__name__)
 # =============================================================================
  
 # --- Security: default timeout for all HTTP requests (seconds) ---
+# Tuple (connect_timeout, read_timeout); applied by _request_with_retry.
 REQUEST_TIMEOUT = (10, 30)
+
+# Dry-run transport toggle. When true (default), HTTP calls are simulated by
+# _DryRunResponse *through the same request path* used in live mode — so
+# identifier validation, the timeout, the OAuth1 auth object, and the
+# retry/backoff wrapper are all genuinely exercised without real credentials.
+# Live mode: set CONNECTOR_DRY_RUN=false and uncomment the requests import.
+DRY_RUN = os.environ.get("CONNECTOR_DRY_RUN", "true").strip().lower() != "false"
+
+
+def _validate_identifier(value: str, allow_list: list = None) -> str:
+    """Validate that a string is a safe SuiteQL/API identifier.
+
+    Rejects characters usable for SuiteQL/path injection (spaces, quotes,
+    semicolons, dots, slashes, etc.). Optionally checks an allow-list. Raises
+    ValueError if unsafe.
+    """
+    if allow_list and value not in allow_list:
+        raise ValueError(f"Identifier '{value}' is not in the allow-list.")
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', value):
+        raise ValueError(f"Identifier '{value}' contains invalid characters.")
+    return value
+
+
+# SuiteQL allow-list: maps public record_type names to their SuiteQL table
+# expressions. Used by get_record_count() (the table expression is pre-approved,
+# never built from raw record_type) and as the discovery allow-list. Add entries
+# here when adding record types to RECORD_TYPES_TO_SCAN.
+SUITEQL_TABLE_MAP = {
+    "customer":      "customer",
+    "vendor":        "vendor",
+    "employee":      "employee",
+    "salesOrder":    "transaction WHERE type = 'SalesOrd'",
+    "invoice":       "transaction WHERE type = 'CustInvc'",
+    "purchaseOrder": "transaction WHERE type = 'PurchOrd'",
+    "vendorBill":    "transaction WHERE type = 'VendBill'",
+    "inventoryItem": "item WHERE itemType = 'InvtPart'",
+    "journalEntry":  "transaction WHERE type = 'Journal'",
+    "account":       "account",
+}
  
  
 # --- M1: metadata sanitization (see Security Review) ---
@@ -303,8 +343,32 @@ def _sanitize_text(value, max_length: int = MAX_DESCRIPTION_LENGTH) -> str:
 MAX_RETRIES = 4
  
  
-def _request_with_retry(method: str, url: str, **kwargs):
-    """HTTP request with exponential backoff for live mode.
+class _DryRunResponse:
+    """Minimal stand-in for requests.Response used in dry-run mode.
+
+    Lets the full request path — OAuth1 auth, the configured timeout, and the
+    retry/backoff wrapper — execute unchanged without a live endpoint or the
+    `requests`/`requests-oauthlib` dependencies. status_code is 200 so the
+    success path runs; json() returns the simulated payload.
+    """
+
+    def __init__(self, payload, url: str, method: str, timeout):
+        self._payload = payload if payload is not None else {}
+        self.url = url
+        self.request_method = method
+        self.request_timeout = timeout
+        self.status_code = 200
+        self.headers = {}
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
+
+
+def _request_with_retry(method: str, url: str, dry_run_payload=None, **kwargs):
+    """HTTP request with exponential backoff, for BOTH live and dry-run.
  
     Retries on 429 (honoring Retry-After — important for shared source-API
     quotas like Salesforce daily limits), transient 5xx, and connection or
@@ -319,7 +383,16 @@ def _request_with_retry(method: str, url: str, **kwargs):
     kwargs.setdefault("timeout", REQUEST_TIMEOUT)
     for attempt in range(MAX_RETRIES + 1):
         try:
-            response = requests.request(method, url, **kwargs)  # noqa: F821 (live mode)
+            if DRY_RUN:
+                # Simulated transport: exercises the OAuth1 auth, timeout, and
+                # this retry/backoff wrapper without a live endpoint.
+                logger.info(
+                    f"[DRY RUN] {method} {url.split('?')[0]} (timeout={kwargs['timeout']})"
+                )
+                payload = dry_run_payload() if callable(dry_run_payload) else dry_run_payload
+                response = _DryRunResponse(payload, url, method, kwargs["timeout"])
+            else:
+                response = requests.request(method, url, **kwargs)  # noqa: F821 (live mode)
             if response.status_code == 429 or 500 <= response.status_code < 600:
                 if attempt == MAX_RETRIES:
                     response.raise_for_status()
@@ -623,6 +696,16 @@ class NetSuiteConfig:
     @property
     def base_url(self) -> str:
         """Base URL for NetSuite SuiteTalk REST API."""
+        # SSRF/subdomain-injection guard: account_id becomes the host subdomain,
+        # so it must be strictly alphanumeric+underscore. The .suitetalk.api.
+        # netsuite.com suffix is hardcoded (never Key-Vault-supplied), so a full
+        # _validate_url_domain check does not apply here. Account IDs may start
+        # with a digit (e.g. "1234567"), so _validate_identifier is not usable.
+        if not re.match(r'^[A-Za-z0-9_]+$', self.account_id):
+            raise ValueError(
+                f"NetSuite account_id '{self.account_id}' contains invalid characters. "
+                f"Expected alphanumerics and underscores only."
+            )
         account_slug = self.account_id.lower().replace("_", "-")
         return f"https://{account_slug}.suitetalk.api.netsuite.com/services/rest"
  
@@ -752,8 +835,14 @@ class NetSuiteDiscoveryService:
         #     })
         # return fields
  
-        logger.info(f"[DRY RUN] Would call GET {self.config.record_api_url}/metadata-catalog/{record_type}")
-        return self._get_simulated_fields(record_type)
+        # Validate record_type against the allow-list before it enters a URL.
+        _validate_identifier(record_type, list(SUITEQL_TABLE_MAP.keys()))
+        url = f"{self.config.record_api_url}/metadata-catalog/{record_type}"
+        response = _request_with_retry(
+            "GET", url, auth=self.auth.get_auth(), headers=self.auth.get_headers(),
+            dry_run_payload=lambda: {"fields": self._get_simulated_fields(record_type)},
+        )
+        return response.json()["fields"]
  
     def get_record_count(self, record_type: str) -> int:
         """Get the record count via SuiteQL query.
@@ -781,13 +870,30 @@ class NetSuiteDiscoveryService:
         # items = response.json().get("items", [])
         # return items[0].get("cnt", 0) if items else 0
  
+        # SuiteQL injection guard (active in dry-run and live): never interpolate
+        # record_type into a query — only the pre-approved table expression from
+        # SUITEQL_TABLE_MAP is used.
+        if record_type not in SUITEQL_TABLE_MAP:
+            raise ValueError(
+                f"Record type '{record_type}' is not in the SuiteQL allow-list. "
+                f"Add it to SUITEQL_TABLE_MAP before use."
+            )
+        table = SUITEQL_TABLE_MAP[record_type]
         counts = {
             "customer": 4200, "vendor": 850, "employee": 320,
             "salesOrder": 18500, "invoice": 22300, "purchaseOrder": 6100,
             "vendorBill": 9400, "inventoryItem": 3750,
             "journalEntry": 15200, "account": 285,
         }
-        return counts.get(record_type, 0)
+        url = self.config.suiteql_url
+        payload = {"q": f"SELECT COUNT(*) AS cnt FROM {table}"}
+        response = _request_with_retry(
+            "POST", url, json=payload, auth=self.auth.get_auth(),
+            headers={**self.auth.get_headers(), "Prefer": "transient"},
+            dry_run_payload=lambda: {"items": [{"cnt": counts.get(record_type, 0)}]},
+        )
+        items = response.json().get("items", [])
+        return items[0].get("cnt", 0) if items else 0
  
     def _get_simulated_fields(self, record_type: str) -> list:
         """Return simulated field metadata for dry-run mode."""
@@ -953,8 +1059,10 @@ class TypeDefService:
     def register_types(purview_endpoint: str, bearer_token: str) -> dict:
         url = f"{purview_endpoint}/api/atlas/v2/types/typedefs"
         type_names = [t["name"] for t in TypeDefService.NETSUITE_TYPES["entityDefs"]]
-        logger.info(f"[DRY RUN] Would POST to {url}")
-        logger.info(f"[DRY RUN] Would register {len(type_names)} types: {type_names}")
+        headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
+        _request_with_retry("POST", url, headers=headers, json=TypeDefService.NETSUITE_TYPES,
+                            dry_run_payload=lambda: TypeDefService.NETSUITE_TYPES)
+        logger.info(f"Registered {len(type_names)} types: {type_names}")
         return TypeDefService.NETSUITE_TYPES
  
  
@@ -985,7 +1093,10 @@ class EntityService:
         url = f"{purview_endpoint}/api/atlas/v2/entity/bulk"
         for i in range(0, len(entities), EntityService.BATCH_SIZE):
             batch = entities[i : i + EntityService.BATCH_SIZE]
-            logger.info(f"[DRY RUN] Would POST batch of {len(batch)} entities to {url}")
+            headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
+            _request_with_retry("POST", url, headers=headers, json={"entities": batch},
+                                dry_run_payload=lambda b=batch: {"count": len(b)})
+            logger.info(f"POSTed batch of {len(batch)} entities to {url}")
             for e in batch:
                 logger.info(f"  → {e['attributes']['qualifiedName']}")
         return {"batches_sent": (len(entities) + EntityService.BATCH_SIZE - 1) // EntityService.BATCH_SIZE}
@@ -1009,11 +1120,19 @@ class LineageService:
 class MetadataService:
     @staticmethod
     def apply_business_metadata(purview_endpoint, bearer_token, entity_guid, metadata):
-        logger.info(f"[DRY RUN] Would apply business metadata to entity {entity_guid}: {metadata}")
+        headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
+        url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/businessmetadata?isOverwrite=true"
+        _request_with_retry("POST", url, headers=headers, json=metadata,
+                            dry_run_payload=lambda: {"guid": entity_guid})
+        logger.info(f"Applied business metadata to entity {entity_guid}: {metadata}")
  
     @staticmethod
     def apply_classification(purview_endpoint, bearer_token, entity_guid, classification_name):
-        logger.info(f"[DRY RUN] Would apply classification '{classification_name}' to entity {entity_guid}")
+        headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
+        url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/classifications"
+        _request_with_retry("POST", url, headers=headers, json=[{"typeName": classification_name}],
+                            dry_run_payload=lambda: {"guid": entity_guid})
+        logger.info(f"Applied classification '{classification_name}' to entity {entity_guid}")
  
  
 # =============================================================================
