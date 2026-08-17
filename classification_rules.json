@@ -1,9 +1,14 @@
 {
   "_metadata": {
-    "version": "1.1",
+    "version": "1.4",
     "description": "Classification rules for Purview custom connectors. Data stewards maintain this file.",
     "last_updated": "2026-07-14",
-    "updated_by": "Data Governance Team"
+    "updated_by": "Data Governance Team",
+    "notes": [
+      "Patterns marked enabled:false require the corresponding custom classification type to be created in Purview before enabling.",
+      "Broad wildcard patterns (e.g. *descriptor*, *street*) are intentionally low-priority to minimise false positives.",
+      "Credential/secret field patterns are disabled by default — if these fields appear in a scanned source they should be excluded from cataloguing, not classified."
+    ]
   },
   "field_name_patterns": [
     {
@@ -51,8 +56,9 @@
     {
       "pattern": "*descriptor*",
       "classification": "MICROSOFT.PERSONAL.NAME",
-      "priority": 5,
-      "enabled": true
+      "priority": 3,
+      "enabled": true,
+      "note": "Broad pattern — kept at priority 3 to minimise false positives on non-PII descriptor fields (e.g. ProductDescriptor, ErrorDescriptor). Override with a higher-priority object_field_rule for specific fields."
     },
     {
       "pattern": "*ssn*",
@@ -91,16 +97,48 @@
       "enabled": true
     },
     {
-      "pattern": "*dob*",
+      "pattern": "dob",
       "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
       "priority": 15,
       "enabled": true
     },
     {
+      "pattern": "*_dob",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "dob_*",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*_dob_*",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 15,
+      "enabled": true,
+      "note": "The previous broad '*dob*' pattern matched unrelated fields (e.g. adobe_id). These word-boundary variants avoid those false positives."
+    },
+    {
+      "pattern": "*street_address*",
+      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "priority": 12,
+      "enabled": true
+    },
+    {
+      "pattern": "*streetaddress*",
+      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "priority": 12,
+      "enabled": true
+    },
+    {
       "pattern": "*street*",
       "classification": "MICROSOFT.PERSONAL.ADDRESS",
-      "priority": 10,
-      "enabled": true
+      "priority": 6,
+      "enabled": true,
+      "note": "Broad pattern — priority lowered to 6 to reduce false positives on non-address fields (e.g. WallStreetFirm). Prefer the higher-priority *street_address* / *streetaddress* patterns where possible."
     },
     {
       "pattern": "*mailing*address*",
@@ -190,6 +228,108 @@
       "pattern": "*employee_id*",
       "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
       "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*tax_id*",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*taxid*",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "tin",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*_tin",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "tin_*",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*_tin_*",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 15,
+      "enabled": true,
+      "note": "The previous broad '*tin*' pattern matched unrelated fields (e.g. marketing, accounting, routing, destination). These word-boundary variants avoid those false positives."
+    },
+    {
+      "pattern": "*vat_number*",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*routing_number*",
+      "classification": "MICROSOFT.FINANCIAL.BANK_ACCOUNT_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*driver_license*",
+      "classification": "MICROSOFT.PERSONAL.DRIVERS_LICENSE_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*drivers_license*",
+      "classification": "MICROSOFT.PERSONAL.DRIVERS_LICENSE_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*password*",
+      "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
+      "priority": 50,
+      "enabled": false,
+      "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first. Fields matching this pattern should ideally be excluded from cataloguing entirely."
+    },
+    {
+      "pattern": "*api_key*",
+      "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
+      "priority": 50,
+      "enabled": false,
+      "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
+    },
+    {
+      "pattern": "*secret_key*",
+      "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
+      "priority": 50,
+      "enabled": false,
+      "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
+    },
+    {
+      "pattern": "*access_token*",
+      "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
+      "priority": 50,
+      "enabled": false,
+      "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
+    },
+    {
+      "pattern": "*client_secret*",
+      "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
+      "priority": 50,
+      "enabled": false,
+      "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
+    },
+    {
+      "pattern": "*dob*",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 15,
       "enabled": true
     },
     {
