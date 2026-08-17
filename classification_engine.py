@@ -24,15 +24,67 @@ class ClassificationEngine:
     def __init__(self, rules_path=None):
         if rules_path is None:
             rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "classification_rules.json")
+        # Resolve symlinks/relative segments to a canonical absolute path.
+        rules_path = os.path.realpath(rules_path)
         if not os.path.exists(rules_path):
             raise FileNotFoundError(f"Rules not found: {rules_path}")
         with open(rules_path, "r", encoding="utf-8") as f:
             c = json.load(f)
+        self._validate_schema(c)
         self._name = [r for r in c.get("field_name_patterns", []) if r.get("enabled", True)]
         self._type = [r for r in c.get("field_type_rules", []) if r.get("enabled", True)]
         self._exact = [r for r in c.get("object_field_rules", []) if r.get("enabled", True)]
         logger.info(f"Classification engine: {len(self._name)} name, {len(self._type)} type, {len(self._exact)} exact rules")
  
+    @staticmethod
+    def _validate_schema(data: dict) -> None:
+        """Validate that the rules JSON contains the expected structure and required keys.
+
+        Raises ValueError if any rule is missing required fields, preventing silent
+        misclassification caused by a corrupt or tampered rules file.
+        """
+        required_sections = {"field_name_patterns", "field_type_rules", "object_field_rules"}
+        for section in required_sections:
+            if section not in data:
+                raise ValueError(f"classification_rules.json is missing required section: '{section}'")
+            if not isinstance(data[section], list):
+                raise ValueError(f"classification_rules.json section '{section}' must be a list")
+
+        _NAME_REQUIRED  = {"pattern", "classification", "priority"}
+        _TYPE_REQUIRED  = {"type",    "classification", "priority"}
+        _EXACT_REQUIRED = {"source", "object", "field", "classification", "priority"}
+
+        for i, rule in enumerate(data["field_name_patterns"]):
+            missing = _NAME_REQUIRED - rule.keys()
+            if missing:
+                raise ValueError(f"field_name_patterns[{i}] missing keys: {missing}")
+            if not isinstance(rule["priority"], (int, float)):
+                raise ValueError(f"field_name_patterns[{i}] 'priority' must be numeric, got {type(rule['priority']).__name__}")
+            if not isinstance(rule["pattern"], str):
+                raise ValueError(f"field_name_patterns[{i}] 'pattern' must be a string")
+            if not isinstance(rule["classification"], str):
+                raise ValueError(f"field_name_patterns[{i}] 'classification' must be a string")
+
+        for i, rule in enumerate(data["field_type_rules"]):
+            missing = _TYPE_REQUIRED - rule.keys()
+            if missing:
+                raise ValueError(f"field_type_rules[{i}] missing keys: {missing}")
+            if not isinstance(rule["priority"], (int, float)):
+                raise ValueError(f"field_type_rules[{i}] 'priority' must be numeric, got {type(rule['priority']).__name__}")
+            for key in ("type", "classification"):
+                if not isinstance(rule[key], str):
+                    raise ValueError(f"field_type_rules[{i}] '{key}' must be a string")
+
+        for i, rule in enumerate(data["object_field_rules"]):
+            missing = _EXACT_REQUIRED - rule.keys()
+            if missing:
+                raise ValueError(f"object_field_rules[{i}] missing keys: {missing}")
+            if not isinstance(rule["priority"], (int, float)):
+                raise ValueError(f"object_field_rules[{i}] 'priority' must be numeric, got {type(rule['priority']).__name__}")
+            for key in ("source", "object", "field", "classification"):
+                if not isinstance(rule[key], str):
+                    raise ValueError(f"object_field_rules[{i}] '{key}' must be a string")
+
     def classify_field(self, source, object_name, field_name, field_type=None):
         matches = []
         for r in self._exact:
