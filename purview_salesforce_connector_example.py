@@ -482,7 +482,17 @@ def _request_with_retry(method: str, url: str, dry_run_payload=None, **kwargs):
             response.raise_for_status()
             return response
         except Exception as exc:
-            if exc.__class__.__name__ in ("ConnectionError", "Timeout", "ChunkedEncodingError"):
+            # Check for transient network errors from requests library
+            # Import check: requests may not be available in dry-run mode
+            is_retryable = False
+            if not DRY_RUN:
+                import requests.exceptions
+                is_retryable = isinstance(exc, (
+                    requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                    requests.exceptions.ChunkedEncodingError,
+                ))
+            if is_retryable:
                 if attempt == MAX_RETRIES:
                     raise
                 delay = (2 ** attempt) + random.random()
@@ -586,10 +596,12 @@ def _check_metadata_drift(entries, state_path: str = None) -> dict:
     current = {qn: hashlib.sha256((desc or "").encode()).hexdigest()
                for qn, desc in entries}
     previous = {}
+    read_succeeded = False
     if os.path.exists(state_path):
         try:
             with open(state_path) as fh:
                 previous = _json.load(fh)
+            read_succeeded = True
         except Exception as exc:
             logger.warning(f"Drift state unreadable ({exc.__class__.__name__}); treating all assets as new")
  
@@ -613,11 +625,13 @@ def _check_metadata_drift(entries, state_path: str = None) -> dict:
     if result["added"] and previous:
         logger.info(f"Metadata drift: {len(result['added'])} new asset(s) since the last run")
  
-    try:
-        with open(state_path, "w") as fh:
-            _json.dump(current, fh)
-    except Exception as exc:
-        logger.warning(f"Could not persist drift state ({exc.__class__.__name__})")
+    # Only persist state in live mode and if the previous read succeeded
+    if not DRY_RUN and (read_succeeded or not os.path.exists(state_path)):
+        try:
+            with open(state_path, "w") as fh:
+                _json.dump(current, fh)
+        except Exception as exc:
+            logger.warning(f"Could not persist drift state ({exc.__class__.__name__})")
     return result
  
  

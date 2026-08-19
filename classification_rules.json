@@ -327,12 +327,6 @@
       "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
     },
     {
-      "pattern": "*dob*",
-      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
-      "priority": 15,
-      "enabled": true
-    },
-    {
       "pattern": "*amount*",
       "classification": "MICROSOFT.FINANCIAL.AMOUNT",
       "priority": 10,

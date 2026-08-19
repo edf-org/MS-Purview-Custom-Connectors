@@ -13,9 +13,9 @@ A condensed checklist of the steps needed to stand up the custom API solution. F
 3. **Purview authentication method: Managed Identity** (Architecture Doc, Section 3). The connector will run in Azure and authenticate to both Purview and Key Vault using the Function App's System-Assigned Managed Identity — no client secrets to create, store, or rotate. Note: Managed Identity only works when running inside Azure, so local testing is done in dry-run mode (no credentials required) and live validation happens after deploying to the Function App.
 ## Phase 2: Grant Purview Access
  
-4. In the **Purview governance portal** → Data Map → Collections → root collection → **Role assignments**, assign the Function App's managed identity (this happens after the Function App is created in Phase 5 — search for it by the Function App name):
-   - **Data Curator** — entity creation, lineage, classifications
-   - **Data Source Administrator** — registering sources, managing scans
+4. In the **Purview governance portal** → Data Map → Collections, create or select a dedicated collection for the source (recommended: create a collection per source system, e.g., "Salesforce", "Workday", etc., rather than using the root collection). Then, in **Role assignments** for that collection, assign the Function App's managed identity (this happens after the Function App is created in Phase 5 — search for it by the Function App name):
+   - **Data Curator** — entity creation, lineage, classifications (scoped to the collection)
+   - **Data Source Administrator** — registering sources, managing scans (scoped to the collection)
 5. Grant the same identity **Key Vault Secrets User** on your Key Vault so the connector can read source credentials.
 > Note: Only a Collection Admin can assign these roles — loop in your Purview administrator if you don't see the option.
  

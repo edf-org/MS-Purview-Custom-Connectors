@@ -407,7 +407,17 @@ def _request_with_retry(method: str, url: str, dry_run_payload=None, **kwargs):
             response.raise_for_status()
             return response
         except Exception as exc:
-            if exc.__class__.__name__ in ("ConnectionError", "Timeout", "ChunkedEncodingError"):
+            # Check for transient network errors from requests library
+            # Import check: requests may not be available in dry-run mode
+            is_retryable = False
+            if not DRY_RUN:
+                import requests.exceptions
+                is_retryable = isinstance(exc, (
+                    requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                    requests.exceptions.ChunkedEncodingError,
+                ))
+            if is_retryable:
                 if attempt == MAX_RETRIES:
                     raise
                 delay = (2 ** attempt) + random.random()
@@ -511,10 +521,12 @@ def _check_metadata_drift(entries, state_path: str = None) -> dict:
     current = {qn: hashlib.sha256((desc or "").encode()).hexdigest()
                for qn, desc in entries}
     previous = {}
+    read_succeeded = False
     if os.path.exists(state_path):
         try:
             with open(state_path) as fh:
                 previous = _json.load(fh)
+            read_succeeded = True
         except Exception as exc:
             logger.warning(f"Drift state unreadable ({exc.__class__.__name__}); treating all assets as new")
  
@@ -538,11 +550,13 @@ def _check_metadata_drift(entries, state_path: str = None) -> dict:
     if result["added"] and previous:
         logger.info(f"Metadata drift: {len(result['added'])} new asset(s) since the last run")
  
-    try:
-        with open(state_path, "w") as fh:
-            _json.dump(current, fh)
-    except Exception as exc:
-        logger.warning(f"Could not persist drift state ({exc.__class__.__name__})")
+    # Only persist state in live mode and if the previous read succeeded
+    if not DRY_RUN and (read_succeeded or not os.path.exists(state_path)):
+        try:
+            with open(state_path, "w") as fh:
+                _json.dump(current, fh)
+        except Exception as exc:
+            logger.warning(f"Could not persist drift state ({exc.__class__.__name__})")
     return result
  
  
@@ -842,7 +856,29 @@ class NetSuiteDiscoveryService:
             "GET", url, auth=self.auth.get_auth(), headers=self.auth.get_headers(),
             dry_run_payload=lambda: {"fields": self._get_simulated_fields(record_type)},
         )
-        return response.json()["fields"]
+
+        # In dry-run mode, the payload contains a pre-built "fields" array.
+        # In live mode, the NetSuite Metadata Catalog API returns an OpenAPI-style schema
+        # with "properties" and "required" that must be translated to the fields format.
+        data = response.json()
+        if "fields" in data:
+            # Dry-run path
+            return data["fields"]
+        else:
+            # Live mode: parse OpenAPI schema format
+            properties = data.get("properties", {})
+            required_fields = data.get("required", [])
+            fields = []
+            for field_name, field_def in properties.items():
+                fields.append({
+                    "name": field_name,
+                    "type": field_def.get("type", "string"),
+                    "title": field_def.get("title", field_name),
+                    "required": field_name in required_fields,
+                    "readOnly": field_def.get("readOnly", False),
+                    "enum": field_def.get("enum", None),
+                })
+            return fields
  
     def get_record_count(self, record_type: str) -> int:
         """Get the record count via SuiteQL query.

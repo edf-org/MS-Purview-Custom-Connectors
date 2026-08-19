@@ -445,19 +445,19 @@ Purview’s native Salesforce, NetSuite, and Workday connectors extract metadata
  
 ## 11.1 Available Connectors
  
-- **purview_salesforce_connector.py: **Salesforce CRM — OAuth 2.0, object/field discovery, classifications via engine, cross-system lineage
+- **purview_salesforce_connector_example.py: **Salesforce CRM — OAuth 2.0, object/field discovery, classifications via engine, cross-system lineage
  
-- **purview_netsuite_connector.py: **Oracle NetSuite — OAuth 1.0a (TBA), record type/field discovery, classifications via engine, lineage to DW/BI
+- **purview_netsuite_connector_example.py: **Oracle NetSuite — OAuth 1.0a (TBA), record type/field discovery, classifications via engine, lineage to DW/BI
  
-- **purview_workday_connector.py: **Workday HCM — OAuth 2.0 with refresh tokens, business object discovery, classifications via engine, lineage to AD
+- **purview_workday_connector_example.py: **Workday HCM — OAuth 2.0 with refresh tokens, business object discovery, classifications via engine, lineage to AD
  
-- **purview_sql_connector.py: **SQL Server — Service Principal auth, DB → schema → table → column hierarchy, classifications via engine, lineage
+- **purview_sql_custom_connector_example.py: **SQL Server — Service Principal auth, DB → schema → table → column hierarchy, classifications via engine, lineage
  
 ## 11.2 Configuration-Driven Classification Engine
  
 Rather than hardcoding classification rules in each connector’s Python code, all four connectors use a shared Classification Engine that separates “what to classify” (maintained by data stewards in a JSON file) from “how to classify” (handled by a reusable Python module).
  
-- **classification_rules.json: **52 rules across three priority layers. Object-field exact rules (priority 50) beat field name patterns (priority 10) which beat type rules (priority 5). Data stewards add, modify, or disable rules without touching Python code.
+- **classification_rules.json: **68 enabled rules across three priority layers. Object-field exact rules (priority 50) beat field name patterns (priority 10) which beat type rules (priority 5). Data stewards add, modify, or disable rules without touching Python code.
  
 - **classification_engine.py: **Shared Python module imported by all four connectors. Loads the JSON, evaluates all rule layers, returns the winning Purview classification type. Includes built-in self-test.
  

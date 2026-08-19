@@ -63,6 +63,26 @@ logger = logging.getLogger(__name__)
 SEARCH_PAGE_SIZE = 50          # Purview search API page limit
 DELETE_BATCH_SIZE = 20         # GUIDs per bulk-delete call (keep URLs short)
 PURVIEW_SCOPE = "https://purview.azure.net/.default"
+
+
+def _validate_purview_endpoint(url: str) -> str:
+    """Validate a Purview endpoint against trusted Purview hosts."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https":
+        raise ValueError("Purview endpoint must use https.")
+    allowed = (
+        host.endswith(".purview.azure.com")                    # classic accounts
+        or host == "api.purview-service.microsoft.com"          # new unified portal
+        or host.endswith("-api.purview-service.microsoft.com")  # tenant-specific / private endpoint form
+    )
+    if not allowed:
+        raise ValueError(
+            f"Purview endpoint host '{host}' is not in the trusted domain allow-list. "
+            "Expected: *.purview.azure.com or *-api.purview-service.microsoft.com"
+        )
+    return url
  
  
 def get_endpoint_and_token():
@@ -75,7 +95,16 @@ def get_endpoint_and_token():
     if not account:
         logger.error("PURVIEW_ACCOUNT_NAME is not set (env var or .env file).")
         sys.exit(1)
-    endpoint = f"https://{account}.purview.azure.com"
+
+    # Validate account name format before constructing endpoint
+    if not account.replace("-", "").replace("_", "").isalnum():
+        logger.error(f"Invalid PURVIEW_ACCOUNT_NAME format: '{account}'")
+        sys.exit(1)
+
+    endpoint = f"https://{account}.purview.azure.com/datamap"
+    # Validate the constructed endpoint
+    endpoint = _validate_purview_endpoint(endpoint)
+
     credential = DefaultAzureCredential()
     token = credential.get_token(PURVIEW_SCOPE).token
     return endpoint, token
@@ -89,7 +118,7 @@ def find_entities_by_run_id(endpoint: str, token: str, run_id: str) -> list:
     """
     import requests
  
-    url = f"{endpoint}/datamap/api/search/query?api-version=2023-09-01"
+    url = f"{endpoint}/api/search/query?api-version=2023-09-01"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
  
     entities, offset = [], 0
@@ -99,9 +128,13 @@ def find_entities_by_run_id(endpoint: str, token: str, run_id: str) -> list:
             "limit": SEARCH_PAGE_SIZE,
             "offset": offset,
             "filter": {
-                "attributeName": "scanRunId",
-                "operator": "eq",
-                "attributeValue": run_id,
+                "and": [
+                    {
+                        "attributeName": "scanRunId",
+                        "operator": "eq",
+                        "attributeValue": run_id,
+                    }
+                ]
             },
         }
         resp = requests.post(url, json=body, headers=headers, timeout=60)
@@ -132,7 +165,16 @@ def delete_entities(endpoint: str, token: str, entities: list) -> int:
  
     headers = {"Authorization": f"Bearer {token}"}
     deleted = 0
-    guids = [e["guid"] for e in entities if e["guid"]]
+    guids = []
+    for e in entities:
+        if e["guid"]:
+            guids.append(e["guid"])
+        else:
+            # Log entities with missing GUIDs so the count reconciles with preview
+            logger.warning(
+                f"Entity missing GUID, skipping deletion: "
+                f"[{e.get('entityType', 'unknown')}] {e.get('qualifiedName', 'unknown')}"
+            )
  
     for i in range(0, len(guids), DELETE_BATCH_SIZE):
         batch = guids[i : i + DELETE_BATCH_SIZE]
