@@ -815,13 +815,30 @@ class PurviewAuthService:
         return None
  
     def get_bearer_token(self) -> str:
-        """Get a bearer token for direct REST API calls."""
-        # --- Uncomment for real usage ---
-        # credential = DefaultAzureCredential()
-        # token = credential.get_token("https://purview.azure.net/.default")
-        # return token.token
-        logger.info("[DRY RUN] Would acquire Purview bearer token via DefaultAzureCredential")
-        return "dry-run-purview-token"
+        """Get a bearer token for direct REST API calls.
+
+        Credential selection (live path only):
+        - PURVIEW_USE_CLI_CREDENTIAL=true -> AzureCliCredential. Needed in
+          environments like Azure Cloud Shell, where DefaultAzureCredential
+          resolves to a token Purview rejects with 401 even though the CLI
+          token (same identity, same audience) is accepted.
+        - otherwise -> DefaultAzureCredential, so production Managed Identity
+          continues to work unchanged.
+        """
+        if DRY_RUN:
+            logger.info("[DRY RUN] Would acquire Purview bearer token via DefaultAzureCredential")
+            return "dry-run-purview-token"
+
+        from azure.identity import DefaultAzureCredential, AzureCliCredential
+        use_cli = os.environ.get("PURVIEW_USE_CLI_CREDENTIAL", "false").strip().lower() == "true"
+        if use_cli:
+            logger.info("Acquiring Purview bearer token via AzureCliCredential")
+            credential = AzureCliCredential()
+        else:
+            logger.info("Acquiring Purview bearer token via DefaultAzureCredential")
+            credential = DefaultAzureCredential()
+        token = credential.get_token("https://purview.azure.net/.default")
+        return token.token
  
  
 class SalesforceAuthService:
