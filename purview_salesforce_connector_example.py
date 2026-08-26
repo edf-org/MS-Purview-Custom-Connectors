@@ -1108,7 +1108,7 @@ class TypeDefService:
                 "category": "ENTITY",
                 "name": "custom_salesforce_org",
                 "description": "A Salesforce organization (instance)",
-                "superTypes": ["Server"],
+                "superTypes": ["Asset"],
                 "typeVersion": "1.0",
                 "attributeDefs": [
                     {
