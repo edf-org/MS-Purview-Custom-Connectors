@@ -310,6 +310,12 @@ logger = logging.getLogger(__name__)
 # every call — source-side (Salesforce) and Purview-side alike.
 REQUEST_TIMEOUT = (10, 30)
 
+# Purview Data Map REST API version. The /entity/bulk route (and the other
+# /entity/* routes) 404 without this query parameter; only /types/typedefs
+# resolves without it. Kept configurable so the version can be pinned per
+# environment without a code change.
+PURVIEW_API_VERSION = os.environ.get("PURVIEW_API_VERSION", "2023-09-01")
+
 
 # Dry-run transport toggle. When true (the default for these examples), HTTP
 # calls are simulated by _DryRunResponse *through the same request path* used
@@ -1387,7 +1393,7 @@ class EntityService:
         Supports up to 50 entities per request. Automatically batches.
         Entities are upserted based on qualifiedName (safe to re-run).
         """
-        url = f"{purview_endpoint}/api/atlas/v2/entity/bulk"
+        url = f"{purview_endpoint}/api/atlas/v2/entity/bulk?api-version={PURVIEW_API_VERSION}"
         results = []
  
         for i in range(0, len(entities), EntityService.BATCH_SIZE):
@@ -1509,7 +1515,7 @@ class MetadataService:
             entity_guid: The GUID of the target entity
             metadata: Dict of {BusinessMetadataTypeName: {attribute: value}}
         """
-        url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/businessmetadata?isOverwrite=true"
+        url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/businessmetadata?isOverwrite=true&api-version={PURVIEW_API_VERSION}"
         headers = {
             "Authorization": f"Bearer {bearer_token}",
             "Content-Type": "application/json",
@@ -1532,7 +1538,7 @@ class MetadataService:
  
         Uses: POST {endpoint}/api/atlas/v2/entity/guid/{guid}/classifications
         """
-        url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/classifications"
+        url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/classifications?api-version={PURVIEW_API_VERSION}"
         payload = [{"typeName": classification_name}]
         headers = {
             "Authorization": f"Bearer {bearer_token}",
