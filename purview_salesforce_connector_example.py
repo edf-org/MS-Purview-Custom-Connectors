@@ -1322,13 +1322,27 @@ class TypeDefService:
         }
  
         type_names = [t["name"] for t in TypeDefService.SALESFORCE_TYPES["entityDefs"]]
-        # Idempotent registration through the retry/timeout wrapper (re-running
-        # updates existing types). In dry-run the wrapper echoes the type set.
-        _request_with_retry(
-            "POST", url, json=TypeDefService.SALESFORCE_TYPES, headers=headers,
-            dry_run_payload=lambda: TypeDefService.SALESFORCE_TYPES,
-        )
-        logger.info(f"Registered {len(type_names)} Salesforce types: {type_names}")
+        # Idempotent registration through the retry/timeout wrapper. The typedef
+        # POST is create-only: Atlas returns 409 Conflict when the types already
+        # exist, so re-running the connector would otherwise fail here. Treat the
+        # 409 as success (types already present) and continue; any other error
+        # still propagates. The retry/timeout wrapper and dry-run path are
+        # untouched — only the already-exists case is caught.
+        try:
+            _request_with_retry(
+                "POST", url, json=TypeDefService.SALESFORCE_TYPES, headers=headers,
+                dry_run_payload=lambda: TypeDefService.SALESFORCE_TYPES,
+            )
+            logger.info(f"Registered {len(type_names)} Salesforce types: {type_names}")
+        except Exception as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code == 409:
+                logger.info(
+                    f"Salesforce types already registered (HTTP 409); "
+                    f"continuing: {type_names}"
+                )
+            else:
+                raise
         return TypeDefService.SALESFORCE_TYPES
  
  
