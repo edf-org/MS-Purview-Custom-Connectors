@@ -332,6 +332,14 @@ DRY_RUN = os.environ.get("CONNECTOR_DRY_RUN", "true").strip().lower() != "false"
 LIVE_SOURCE = os.environ.get("CONNECTOR_LIVE_SOURCE", "false").strip().lower() == "true"
 SOURCE_DRY_RUN = DRY_RUN or not LIVE_SOURCE
 
+# Classification-attachment toggle. Classifications are always computed and
+# logged, but attaching them to an entity requires the matching classification
+# typedefs (e.g. MICROSOFT.PERSONAL.EMAIL) to exist in the target Purview
+# account — otherwise /entity/bulk 404s on the unknown type. Set to "false" to
+# create entities in accounts where those classification types aren't
+# provisioned; the computed classifications are still logged, just not attached.
+APPLY_CLASSIFICATIONS = os.environ.get("CONNECTOR_APPLY_CLASSIFICATIONS", "true").strip().lower() != "false"
+
 
 # --- Input validation: SOQL/path injection + SSRF guards (ported from the
 # remote reference connector). These run on the live call path in front of the
@@ -1637,6 +1645,10 @@ class SalesforceConnector:
  
         all_entities = []
         object_details = {}  # Store describe results for later use
+        # (qualifiedName, [classificationTypeName]) for every field the engine
+        # classified — tracked independently of APPLY_CLASSIFICATIONS so the
+        # computed classifications are logged/counted even when not attached.
+        classified_field_log = []
  
         # Create the org-level entity
         org_qualified_name = f"salesforce://{self.sf_org_name}"
@@ -1701,6 +1713,8 @@ class SalesforceConnector:
                     source="salesforce", object_name=obj_name,
                     field_name=fld_name, field_type=fld.get("type"),
                 )
+                if fld_classification:
+                    classified_field_log.append((fld_qualified_name, [fld_classification]))
                 fld_entity = EntityService.build_entity(
                     type_name="custom_salesforce_field",
                     qualified_name=fld_qualified_name,
@@ -1713,7 +1727,9 @@ class SalesforceConnector:
                         "isUnique": fld.get("unique", False),
                         "referenceTo": ref_to_str,
                     },
-                    classifications=[fld_classification] if fld_classification else None,
+                    classifications=(
+                        [fld_classification] if fld_classification else None
+                    ) if APPLY_CLASSIFICATIONS else None,
                 )
                 all_entities.append(fld_entity)
  
@@ -1811,15 +1827,17 @@ class SalesforceConnector:
                 "sources (data-quality jobs, ownership registries) before enabling."
             )
  
-        # Classifications were attached at entity-build time by the shared
-        # ClassificationEngine (classification_rules.json) — no hardcoded
-        # PII/financial field lists. Log what the engine classified.
-        classified_fields = [e for e in all_entities if e.get("classifications")]
-        for e in classified_fields:
+        # Classifications are computed by the shared ClassificationEngine
+        # (classification_rules.json) — no hardcoded PII/financial field lists.
+        # Log what the engine classified regardless of whether they were
+        # attached to the entity payload (see APPLY_CLASSIFICATIONS).
+        if not APPLY_CLASSIFICATIONS:
             logger.info(
-                f"  Classified {e['attributes']['qualifiedName']} -> "
-                f"{[c['typeName'] for c in e['classifications']]}"
+                "CONNECTOR_APPLY_CLASSIFICATIONS=false: computing and logging "
+                "classifications but NOT attaching them to entities."
             )
+        for qualified_name, class_types in classified_field_log:
+            logger.info(f"  Classified {qualified_name} -> {class_types}")
  
         # --- Summary ---
         logger.info("\n" + "=" * 70)
@@ -1834,7 +1852,7 @@ class SalesforceConnector:
         logger.info(f"  Field entities:   {field_count}")
         logger.info(f"  Process entities: {len(process_entities)}")
         logger.info(f"  Total entities:   {len(all_entities) + len(process_entities)}")
-        logger.info(f"  Fields classified (engine): {len(classified_fields)}")
+        logger.info(f"  Fields classified (engine): {len(classified_field_log)}")
  
  
 # =============================================================================
