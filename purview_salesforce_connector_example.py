@@ -340,6 +340,14 @@ SOURCE_DRY_RUN = DRY_RUN or not LIVE_SOURCE
 # provisioned; the computed classifications are still logged, just not attached.
 APPLY_CLASSIFICATIONS = os.environ.get("CONNECTOR_APPLY_CLASSIFICATIONS", "true").strip().lower() != "false"
 
+# Lineage-apply toggle. Cross-system lineage processes reference downstream
+# output entities (e.g. dwh://analytics-warehouse/crm/dim_customer) that live in
+# other systems and may not exist in the catalog during single-connector
+# testing — Purview 400s on those dangling references. Set to "false" to still
+# build and log the lineage mappings (intent stays visible) while skipping the
+# POST, so isolated test runs don't fail on cross-system references.
+APPLY_LINEAGE = os.environ.get("CONNECTOR_APPLY_LINEAGE", "true").strip().lower() != "false"
+
 
 # --- Input validation: SOQL/path injection + SSRF guards (ported from the
 # remote reference connector). These run on the live call path in front of the
@@ -1777,7 +1785,14 @@ class SalesforceConnector:
                 f"{mapping['process_name']} → {mapping['destination_table']}"
             )
  
-        LineageService.create_lineage(purview_endpoint, purview_token, process_entities)
+        if APPLY_LINEAGE:
+            LineageService.create_lineage(purview_endpoint, purview_token, process_entities)
+        else:
+            logger.info(
+                "CONNECTOR_APPLY_LINEAGE=false: built and logged lineage mappings "
+                "but NOT posting them (skips create_lineage to avoid 400s on "
+                "cross-system output entities absent from the catalog)."
+            )
  
         # --- Step 6: Apply business metadata and classifications ---
         logger.info("\n--- Step 6: Apply Business Metadata and Classifications ---")
