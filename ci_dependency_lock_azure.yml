@@ -1,0 +1,50 @@
+# =============================================================================
+# L4 (see Purview Connector Security Review): dependency lock + SCA pipeline
+# Azure DevOps version — save as azure-pipelines-dependency-lock.yml
+# =============================================================================
+# Same flow as the GitHub Actions version: generate a hash-pinned lock file
+# from requirements.in, SCA-scan it with pip-audit, verify a hash-enforced
+# install, and publish the lock file as a pipeline artifact for review.
+ 
+trigger:
+  paths:
+    include:
+      - requirements.in
+ 
+schedules:
+  - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC — re-audit unchanged deps
+    displayName: Weekly dependency re-audit
+    branches:
+      include:
+        - main
+    always: true
+ 
+pool:
+  vmImage: ubuntu-latest
+ 
+steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: "3.11" # match your Azure Functions runtime
+    displayName: Use Python 3.11
+ 
+  - script: pip install pip-tools pip-audit
+    displayName: Install tooling
+ 
+  - script: pip-compile --generate-hashes requirements.in -o requirements.txt
+    displayName: Generate hash-pinned lock file
+ 
+  - script: pip-audit -r requirements.txt --require-hashes
+    displayName: SCA scan against the lock file
+    # Fails the build on any known vulnerability in the resolved set.
+    # Add `--ignore-vuln <ID>` only with a documented risk acceptance.
+ 
+  - script: |
+      python -m venv .venv
+      .venv/bin/pip install --require-hashes -r requirements.txt
+    displayName: Verify hash-enforced install
+ 
+  - publish: requirements.txt
+    artifact: requirements-lock
+    displayName: Publish lock file artifact
+ 

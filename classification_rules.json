@@ -1,496 +1,501 @@
 {
-    "_metadata": {
-        "version": "1.1",
-        "description": "Classification rules for Purview custom connectors. Data stewards maintain this file.",
-        "last_updated": "2026-04-15",
-        "updated_by": "Data Governance Team",
-        "notes": [
-            "Patterns marked enabled:false require the corresponding custom classification type to be created in Purview before enabling.",
-            "Broad wildcard patterns (e.g. *descriptor*, *street*) are intentionally low-priority to minimise false positives.",
-            "Credential/secret field patterns are disabled by default — if these fields appear in a scanned source they should be excluded from cataloguing, not classified."
-        ]
-    },
-    "field_name_patterns": [
-        {
-            "pattern": "*email*",
-            "classification": "MICROSOFT.PERSONAL.EMAIL",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*phone*",
-            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*firstname*",
-            "classification": "MICROSOFT.PERSONAL.NAME",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*first_name*",
-            "classification": "MICROSOFT.PERSONAL.NAME",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*lastname*",
-            "classification": "MICROSOFT.PERSONAL.NAME",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*last_name*",
-            "classification": "MICROSOFT.PERSONAL.NAME",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*fullname*",
-            "classification": "MICROSOFT.PERSONAL.NAME",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*descriptor*",
-            "classification": "MICROSOFT.PERSONAL.NAME",
-            "priority": 3,
-            "enabled": true,
-            "note": "Broad pattern — kept at priority 3 to minimise false positives on non-PII descriptor fields (e.g. ProductDescriptor, ErrorDescriptor). Override with a higher-priority object_field_rule for specific fields."
-        },
-        {
-            "pattern": "*ssn*",
-            "classification": "MICROSOFT.PERSONAL.US.SOCIAL_SECURITY_NUMBER",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "*social_security*",
-            "classification": "MICROSOFT.PERSONAL.US.SOCIAL_SECURITY_NUMBER",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "*national_id*",
-            "classification": "MICROSOFT.PERSONAL.NATIONAL_ID",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "*passport*",
-            "classification": "MICROSOFT.PERSONAL.PASSPORT_NUMBER",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "*date_of_birth*",
-            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "*birthdate*",
-            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "dob",
-            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "*_dob",
-            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "dob_*",
-            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "*_dob_*",
-            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
-            "priority": 15,
-            "enabled": true,
-            "note": "The previous broad '*dob*' pattern matched unrelated fields (e.g. adobe_id). These word-boundary variants avoid those false positives."
-        },
-        {
-            "pattern": "*street_address*",
-            "classification": "MICROSOFT.PERSONAL.ADDRESS",
-            "priority": 12,
-            "enabled": true
-        },
-        {
-            "pattern": "*streetaddress*",
-            "classification": "MICROSOFT.PERSONAL.ADDRESS",
-            "priority": 12,
-            "enabled": true
-        },
-        {
-            "pattern": "*street*",
-            "classification": "MICROSOFT.PERSONAL.ADDRESS",
-            "priority": 6,
-            "enabled": true,
-            "note": "Broad pattern — priority lowered to 6 to reduce false positives on non-address fields (e.g. WallStreetFirm). Prefer the higher-priority *street_address* / *streetaddress* patterns where possible."
-        },
-        {
-            "pattern": "*mailing*address*",
-            "classification": "MICROSOFT.PERSONAL.ADDRESS",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*postal*",
-            "classification": "MICROSOFT.PERSONAL.ADDRESS",
-            "priority": 8,
-            "enabled": true
-        },
-        {
-            "pattern": "*zipcode*",
-            "classification": "MICROSOFT.PERSONAL.ADDRESS",
-            "priority": 8,
-            "enabled": true
-        },
-        {
-            "pattern": "*credit_card*",
-            "classification": "MICROSOFT.FINANCIAL.CREDIT_CARD_NUMBER",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "*bank_account*",
-            "classification": "MICROSOFT.FINANCIAL.BANK_ACCOUNT_NUMBER",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "*iban*",
-            "classification": "MICROSOFT.FINANCIAL.IBAN",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "*swift*",
-            "classification": "MICROSOFT.FINANCIAL.SWIFT_CODE",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "*salary*",
-            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "*annualrevenue*",
-            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*annual_revenue*",
-            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*ip_address*",
-            "classification": "MICROSOFT.PERSONAL.IPADDRESS",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*ipaddress*",
-            "classification": "MICROSOFT.PERSONAL.IPADDRESS",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*worker_id*",
-            "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*workerid*",
-            "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
-            "priority": 10,
-            "enabled": true
-        },
-        {
-            "pattern": "*employee_id*",
-            "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
-            "priority": 10,
-            "enabled": true
-        },
-
-        {
-            "pattern": "*tax_id*",
-            "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "*taxid*",
-            "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "tin",
-            "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "*_tin",
-            "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "tin_*",
-            "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "*_tin_*",
-            "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
-            "priority": 15,
-            "enabled": true,
-            "note": "The previous broad '*tin*' pattern matched unrelated fields (e.g. marketing, accounting, routing, destination). These word-boundary variants avoid those false positives."
-        },
-        {
-            "pattern": "*vat_number*",
-            "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
-            "priority": 15,
-            "enabled": true
-        },
-        {
-            "pattern": "*routing_number*",
-            "classification": "MICROSOFT.FINANCIAL.BANK_ACCOUNT_NUMBER",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "*driver_license*",
-            "classification": "MICROSOFT.PERSONAL.DRIVERS_LICENSE_NUMBER",
-            "priority": 20,
-            "enabled": true
-        },
-        {
-            "pattern": "*drivers_license*",
-            "classification": "MICROSOFT.PERSONAL.DRIVERS_LICENSE_NUMBER",
-            "priority": 20,
-            "enabled": true
-        },
-
-        {
-            "pattern": "*password*",
-            "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
-            "priority": 50,
-            "enabled": false,
-            "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first. Fields matching this pattern should ideally be excluded from cataloguing entirely."
-        },
-        {
-            "pattern": "*api_key*",
-            "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
-            "priority": 50,
-            "enabled": false,
-            "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
-        },
-        {
-            "pattern": "*secret_key*",
-            "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
-            "priority": 50,
-            "enabled": false,
-            "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
-        },
-        {
-            "pattern": "*access_token*",
-            "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
-            "priority": 50,
-            "enabled": false,
-            "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
-        },
-        {
-            "pattern": "*client_secret*",
-            "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
-            "priority": 50,
-            "enabled": false,
-            "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
-        }
-    ],
-    "field_type_rules": [
-        {
-            "type": "email",
-            "classification": "MICROSOFT.PERSONAL.EMAIL",
-            "priority": 5,
-            "enabled": true
-        },
-        {
-            "type": "phone",
-            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
-            "priority": 5,
-            "enabled": true
-        },
-        {
-            "type": "currency",
-            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
-            "priority": 5,
-            "enabled": true
-        },
-        {
-            "type": "url",
-            "classification": "MICROSOFT.MISCELLANEOUS.URL",
-            "priority": 3,
-            "enabled": true
-        }
-    ],
-    "object_field_rules": [
-        {
-            "source": "salesforce",
-            "object": "Contact",
-            "field": "Email",
-            "classification": "MICROSOFT.PERSONAL.EMAIL",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "salesforce",
-            "object": "Contact",
-            "field": "Birthdate",
-            "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "salesforce",
-            "object": "Contact",
-            "field": "MailingStreet",
-            "classification": "MICROSOFT.PERSONAL.ADDRESS",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "salesforce",
-            "object": "Contact",
-            "field": "MailingCity",
-            "classification": "MICROSOFT.PERSONAL.ADDRESS",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "salesforce",
-            "object": "Lead",
-            "field": "Email",
-            "classification": "MICROSOFT.PERSONAL.EMAIL",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "salesforce",
-            "object": "Lead",
-            "field": "Phone",
-            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "salesforce",
-            "object": "Account",
-            "field": "Phone",
-            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "salesforce",
-            "object": "Account",
-            "field": "AnnualRevenue",
-            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "salesforce",
-            "object": "Opportunity",
-            "field": "Amount",
-            "classification": "MICROSOFT.FINANCIAL.AMOUNT",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "workday",
-            "object": "Workers",
-            "field": "workerId",
-            "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "workday",
-            "object": "Workers",
-            "field": "descriptor",
-            "classification": "MICROSOFT.PERSONAL.NAME",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "workday",
-            "object": "Workers",
-            "field": "primaryWorkEmail",
-            "classification": "MICROSOFT.PERSONAL.EMAIL",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "workday",
-            "object": "Workers",
-            "field": "primaryWorkPhone",
-            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "netsuite",
-            "object": "customer",
-            "field": "email",
-            "classification": "MICROSOFT.PERSONAL.EMAIL",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "netsuite",
-            "object": "customer",
-            "field": "phone",
-            "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "netsuite",
-            "object": "employee",
-            "field": "email",
-            "classification": "MICROSOFT.PERSONAL.EMAIL",
-            "priority": 50,
-            "enabled": true
-        },
-        {
-            "source": "netsuite",
-            "object": "vendor",
-            "field": "email",
-            "classification": "MICROSOFT.PERSONAL.EMAIL",
-            "priority": 50,
-            "enabled": true
-        }
+  "_metadata": {
+    "version": "1.4",
+    "description": "Classification rules for Purview custom connectors. Data stewards maintain this file.",
+    "last_updated": "2026-07-14",
+    "updated_by": "Data Governance Team",
+    "notes": [
+      "Patterns marked enabled:false require the corresponding custom classification type to be created in Purview before enabling.",
+      "Broad wildcard patterns (e.g. *descriptor*, *street*) are intentionally low-priority to minimise false positives.",
+      "Credential/secret field patterns are disabled by default — if these fields appear in a scanned source they should be excluded from cataloguing, not classified."
     ]
+  },
+  "field_name_patterns": [
+    {
+      "pattern": "*email*",
+      "classification": "MICROSOFT.PERSONAL.EMAIL",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*phone*",
+      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*firstname*",
+      "classification": "MICROSOFT.PERSONAL.NAME",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*first_name*",
+      "classification": "MICROSOFT.PERSONAL.NAME",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*lastname*",
+      "classification": "MICROSOFT.PERSONAL.NAME",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*last_name*",
+      "classification": "MICROSOFT.PERSONAL.NAME",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*fullname*",
+      "classification": "MICROSOFT.PERSONAL.NAME",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*descriptor*",
+      "classification": "MICROSOFT.PERSONAL.NAME",
+      "priority": 3,
+      "enabled": true,
+      "note": "Broad pattern — kept at priority 3 to minimise false positives on non-PII descriptor fields (e.g. ProductDescriptor, ErrorDescriptor). Override with a higher-priority object_field_rule for specific fields."
+    },
+    {
+      "pattern": "*ssn*",
+      "classification": "MICROSOFT.PERSONAL.US.SOCIAL_SECURITY_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*social_security*",
+      "classification": "MICROSOFT.PERSONAL.US.SOCIAL_SECURITY_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*national_id*",
+      "classification": "MICROSOFT.PERSONAL.NATIONAL_ID",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*passport*",
+      "classification": "MICROSOFT.PERSONAL.PASSPORT_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*date_of_birth*",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*birthdate*",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "dob",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*_dob",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "dob_*",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*_dob_*",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 15,
+      "enabled": true,
+      "note": "The previous broad '*dob*' pattern matched unrelated fields (e.g. adobe_id). These word-boundary variants avoid those false positives."
+    },
+    {
+      "pattern": "*street_address*",
+      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "priority": 12,
+      "enabled": true
+    },
+    {
+      "pattern": "*streetaddress*",
+      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "priority": 12,
+      "enabled": true
+    },
+    {
+      "pattern": "*street*",
+      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "priority": 6,
+      "enabled": true,
+      "note": "Broad pattern — priority lowered to 6 to reduce false positives on non-address fields (e.g. WallStreetFirm). Prefer the higher-priority *street_address* / *streetaddress* patterns where possible."
+    },
+    {
+      "pattern": "*mailing*address*",
+      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*postal*",
+      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "priority": 8,
+      "enabled": true
+    },
+    {
+      "pattern": "*zipcode*",
+      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "priority": 8,
+      "enabled": true
+    },
+    {
+      "pattern": "*credit_card*",
+      "classification": "MICROSOFT.FINANCIAL.CREDIT_CARD_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*bank_account*",
+      "classification": "MICROSOFT.FINANCIAL.BANK_ACCOUNT_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*iban*",
+      "classification": "MICROSOFT.FINANCIAL.IBAN",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*swift*",
+      "classification": "MICROSOFT.FINANCIAL.SWIFT_CODE",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*salary*",
+      "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*annualrevenue*",
+      "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*annual_revenue*",
+      "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*ip_address*",
+      "classification": "MICROSOFT.PERSONAL.IPADDRESS",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*ipaddress*",
+      "classification": "MICROSOFT.PERSONAL.IPADDRESS",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*worker_id*",
+      "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*workerid*",
+      "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*employee_id*",
+      "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
+      "priority": 10,
+      "enabled": true
+    },
+    {
+      "pattern": "*tax_id*",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*taxid*",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "tin",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*_tin",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "tin_*",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*_tin_*",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 15,
+      "enabled": true,
+      "note": "The previous broad '*tin*' pattern matched unrelated fields (e.g. marketing, accounting, routing, destination). These word-boundary variants avoid those false positives."
+    },
+    {
+      "pattern": "*vat_number*",
+      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "priority": 15,
+      "enabled": true
+    },
+    {
+      "pattern": "*routing_number*",
+      "classification": "MICROSOFT.FINANCIAL.BANK_ACCOUNT_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*driver_license*",
+      "classification": "MICROSOFT.PERSONAL.DRIVERS_LICENSE_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*drivers_license*",
+      "classification": "MICROSOFT.PERSONAL.DRIVERS_LICENSE_NUMBER",
+      "priority": 20,
+      "enabled": true
+    },
+    {
+      "pattern": "*password*",
+      "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
+      "priority": 50,
+      "enabled": false,
+      "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first. Fields matching this pattern should ideally be excluded from cataloguing entirely."
+    },
+    {
+      "pattern": "*api_key*",
+      "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
+      "priority": 50,
+      "enabled": false,
+      "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
+    },
+    {
+      "pattern": "*secret_key*",
+      "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
+      "priority": 50,
+      "enabled": false,
+      "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
+    },
+    {
+      "pattern": "*access_token*",
+      "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
+      "priority": 50,
+      "enabled": false,
+      "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
+    },
+    {
+      "pattern": "*client_secret*",
+      "classification": "CUSTOM.SENSITIVE.CREDENTIAL",
+      "priority": 50,
+      "enabled": false,
+      "note": "DISABLED — requires CUSTOM.SENSITIVE.CREDENTIAL classification type to be created in Purview first."
+    },
+    {
+      "pattern": "*amount*",
+      "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+      "priority": 10,
+      "enabled": true,
+      "notes": "Covers SQL columns like TotalAmount where the API type (decimal) does not map to the 'currency' type rule."
+    }
+  ],
+  "field_type_rules": [
+    {
+      "type": "email",
+      "classification": "MICROSOFT.PERSONAL.EMAIL",
+      "priority": 5,
+      "enabled": true
+    },
+    {
+      "type": "phone",
+      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "priority": 5,
+      "enabled": true
+    },
+    {
+      "type": "currency",
+      "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+      "priority": 5,
+      "enabled": true
+    },
+    {
+      "type": "url",
+      "classification": "MICROSOFT.MISCELLANEOUS.URL",
+      "priority": 3,
+      "enabled": true
+    }
+  ],
+  "object_field_rules": [
+    {
+      "source": "salesforce",
+      "object": "Contact",
+      "field": "Email",
+      "classification": "MICROSOFT.PERSONAL.EMAIL",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "salesforce",
+      "object": "Contact",
+      "field": "Birthdate",
+      "classification": "MICROSOFT.PERSONAL.DATE_OF_BIRTH",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "salesforce",
+      "object": "Contact",
+      "field": "MailingStreet",
+      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "salesforce",
+      "object": "Contact",
+      "field": "MailingCity",
+      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "salesforce",
+      "object": "Lead",
+      "field": "Email",
+      "classification": "MICROSOFT.PERSONAL.EMAIL",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "salesforce",
+      "object": "Lead",
+      "field": "Phone",
+      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "salesforce",
+      "object": "Account",
+      "field": "Phone",
+      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "salesforce",
+      "object": "Account",
+      "field": "AnnualRevenue",
+      "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "salesforce",
+      "object": "Opportunity",
+      "field": "Amount",
+      "classification": "MICROSOFT.FINANCIAL.AMOUNT",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "workday",
+      "object": "Workers",
+      "field": "workerId",
+      "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "workday",
+      "object": "Workers",
+      "field": "descriptor",
+      "classification": "MICROSOFT.PERSONAL.NAME",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "workday",
+      "object": "Workers",
+      "field": "primaryWorkEmail",
+      "classification": "MICROSOFT.PERSONAL.EMAIL",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "workday",
+      "object": "Workers",
+      "field": "primaryWorkPhone",
+      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "netsuite",
+      "object": "customer",
+      "field": "email",
+      "classification": "MICROSOFT.PERSONAL.EMAIL",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "netsuite",
+      "object": "customer",
+      "field": "phone",
+      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "netsuite",
+      "object": "employee",
+      "field": "email",
+      "classification": "MICROSOFT.PERSONAL.EMAIL",
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "source": "netsuite",
+      "object": "vendor",
+      "field": "email",
+      "classification": "MICROSOFT.PERSONAL.EMAIL",
+      "priority": 50,
+      "enabled": true
+    }
+  ]
 }
