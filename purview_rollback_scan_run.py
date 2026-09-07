@@ -87,7 +87,7 @@ def _validate_purview_endpoint(url: str) -> str:
  
 def get_endpoint_and_token():
     """Resolve the Purview endpoint and acquire a bearer token."""
-    from azure.identity import DefaultAzureCredential
+    from azure.identity import DefaultAzureCredential, AzureCliCredential
     from dotenv import load_dotenv
  
     load_dotenv()
@@ -105,7 +105,18 @@ def get_endpoint_and_token():
     # Validate the constructed endpoint
     endpoint = _validate_purview_endpoint(endpoint)
 
-    credential = DefaultAzureCredential()
+    # Credential selection. PURVIEW_USE_CLI_CREDENTIAL=true -> AzureCliCredential,
+    # needed in environments like Azure Cloud Shell where DefaultAzureCredential
+    # resolves to the Managed Identity, which may lack Data Curator on the
+    # collection (its token is then rejected). Otherwise DefaultAzureCredential,
+    # so production Managed Identity keeps working.
+    use_cli = os.environ.get("PURVIEW_USE_CLI_CREDENTIAL", "false").strip().lower() == "true"
+    if use_cli:
+        logger.info("Acquiring Purview token via AzureCliCredential")
+        credential = AzureCliCredential()
+    else:
+        logger.info("Acquiring Purview token via DefaultAzureCredential")
+        credential = DefaultAzureCredential()
     token = credential.get_token(PURVIEW_SCOPE).token
     return endpoint, token
  
