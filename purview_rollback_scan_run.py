@@ -60,7 +60,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
  
-SEARCH_PAGE_SIZE = 50          # Purview search API page limit
+SEARCH_LIMIT = 1000            # Max hits per search; account rejects offset paging
 DELETE_BATCH_SIZE = 20         # GUIDs per bulk-delete call (keep URLs short)
 PURVIEW_SCOPE = "https://purview.azure.net/.default"
 
@@ -144,13 +144,14 @@ def _get_entity_scan_run_id(endpoint: str, token: str, guid: str):
 
 
 def find_entities_by_run_id(endpoint: str, token: str, run_id: str) -> list:
-    """Page through Purview search for all entities stamped with run_id.
+    """Search Purview for all entities stamped with run_id.
 
     Uses keyword search: POST {endpoint}/api/search/query?api-version=2023-09-01
-    with body {"keywords": run_id, "limit": ..., "offset": ...}. The target
-    account rejects the Atlas attribute-filter form with a 400 ("attributeValue
-    should not be null"); keyword search returns the matching entities under the
-    response's "value" array.
+    with body {"keywords": run_id, "limit": SEARCH_LIMIT}. The target account
+    rejects the Atlas attribute-filter form with a 400 ("attributeValue should
+    not be null") and also rejects offset paging (400 "Offset should not be
+    set."), so this is a single request capped at SEARCH_LIMIT hits; keyword
+    search returns the matching entities under the response's "value" array.
 
     Keyword search is broader than an exact-attribute match, so every hit is
     re-verified: only entities whose scanRunId attribute actually equals run_id
@@ -167,30 +168,33 @@ def find_entities_by_run_id(endpoint: str, token: str, run_id: str) -> list:
     url = f"{endpoint}/api/search/query?api-version=2023-09-01"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    candidates, offset = [], 0
-    while True:
-        body = {
-            "keywords": run_id,
-            "limit": SEARCH_PAGE_SIZE,
-            "offset": offset,
-        }
-        resp = requests.post(url, json=body, headers=headers, timeout=60)
-        resp.raise_for_status()
-        page = resp.json().get("value", [])
-        if not page:
-            break
-        for item in page:
-            candidates.append({
-                "guid": item.get("id"),
-                "qualifiedName": item.get("qualifiedName"),
-                "entityType": item.get("entityType"),
-                # scanRunId may ride along on the search hit; if not, it's
-                # resolved per-entity during verification below.
-                "scanRunId": item.get("scanRunId"),
-            })
-        offset += len(page)
-        if len(page) < SEARCH_PAGE_SIZE:
-            break
+    # Single request: the account rejects offset paging (400 "Offset should not
+    # be set."), so all hits must come back in one page capped at SEARCH_LIMIT.
+    body = {"keywords": run_id, "limit": SEARCH_LIMIT}
+    resp = requests.post(url, json=body, headers=headers, timeout=60)
+    resp.raise_for_status()
+    result = resp.json()
+
+    # Guard against silent truncation: if the total match count exceeds what we
+    # asked for, some entities are not in "value" and would be missed.
+    total = result.get("@search.count")
+    if isinstance(total, int) and total > SEARCH_LIMIT:
+        logger.warning(
+            f"Search matched {total} hits but only {SEARCH_LIMIT} were returned "
+            f"(no offset paging supported) — results are TRUNCATED; some entities "
+            f"for run {run_id} may not be listed. Re-run after deleting this batch."
+        )
+
+    candidates = []
+    for item in result.get("value", []):
+        candidates.append({
+            "guid": item.get("id"),
+            "qualifiedName": item.get("qualifiedName"),
+            "entityType": item.get("entityType"),
+            # scanRunId may ride along on the search hit; if not, it's
+            # resolved per-entity during verification below.
+            "scanRunId": item.get("scanRunId"),
+        })
 
     # Verify each hit against the exact scanRunId, since keyword search matches
     # the ID as free text across the whole entity, not just the scanRunId field.
