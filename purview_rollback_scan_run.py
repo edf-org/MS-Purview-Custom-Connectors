@@ -110,32 +110,58 @@ def get_endpoint_and_token():
     return endpoint, token
  
  
+def _get_entity_scan_run_id(endpoint: str, token: str, guid: str):
+    """Fetch one entity by GUID and return its scanRunId attribute, or None.
+
+    Used to re-verify a keyword-search hit before it becomes eligible for
+    deletion. Returns None if the entity can't be read or carries no scanRunId.
+
+    Uses: GET {endpoint}/api/atlas/v2/entity/guid/{guid}?api-version=2023-09-01
+    """
+    import requests
+
+    url = f"{endpoint}/api/atlas/v2/entity/guid/{guid}?api-version=2023-09-01"
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=60)
+        resp.raise_for_status()
+        entity = resp.json().get("entity", {})
+        return entity.get("attributes", {}).get("scanRunId")
+    except Exception as exc:
+        logger.warning(f"Could not fetch entity {guid} to verify scanRunId: {exc}")
+        return None
+
+
 def find_entities_by_run_id(endpoint: str, token: str, run_id: str) -> list:
     """Page through Purview search for all entities stamped with run_id.
- 
-    Uses: POST {endpoint}/datamap/api/search/query?api-version=2023-09-01
+
+    Uses keyword search: POST {endpoint}/api/search/query?api-version=2023-09-01
+    with body {"keywords": run_id, "limit": ..., "offset": ...}. The target
+    account rejects the Atlas attribute-filter form with a 400 ("attributeValue
+    should not be null"); keyword search returns the matching entities under the
+    response's "value" array.
+
+    Keyword search is broader than an exact-attribute match, so every hit is
+    re-verified: only entities whose scanRunId attribute actually equals run_id
+    are returned — never one that merely mentions the ID incidentally. Search
+    hits don't reliably carry custom attributes, so when a hit doesn't include
+    scanRunId the entity is fetched by GUID to read it; any candidate whose
+    scanRunId can't be confirmed equal to run_id is excluded (and logged) rather
+    than risk deleting an unrelated entity.
+
     Returns a list of {"guid", "qualifiedName", "entityType"} dicts.
     """
     import requests
- 
+
     url = f"{endpoint}/api/search/query?api-version=2023-09-01"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
- 
-    entities, offset = [], 0
+
+    candidates, offset = [], 0
     while True:
         body = {
-            "keywords": None,
+            "keywords": run_id,
             "limit": SEARCH_PAGE_SIZE,
             "offset": offset,
-            "filter": {
-                "and": [
-                    {
-                        "attributeName": "scanRunId",
-                        "operator": "eq",
-                        "attributeValue": run_id,
-                    }
-                ]
-            },
         }
         resp = requests.post(url, json=body, headers=headers, timeout=60)
         resp.raise_for_status()
@@ -143,22 +169,45 @@ def find_entities_by_run_id(endpoint: str, token: str, run_id: str) -> list:
         if not page:
             break
         for item in page:
-            entities.append({
+            candidates.append({
                 "guid": item.get("id"),
                 "qualifiedName": item.get("qualifiedName"),
                 "entityType": item.get("entityType"),
+                # scanRunId may ride along on the search hit; if not, it's
+                # resolved per-entity during verification below.
+                "scanRunId": item.get("scanRunId"),
             })
         offset += len(page)
         if len(page) < SEARCH_PAGE_SIZE:
             break
- 
+
+    # Verify each hit against the exact scanRunId, since keyword search matches
+    # the ID as free text across the whole entity, not just the scanRunId field.
+    entities = []
+    for c in candidates:
+        scan_run_id = c["scanRunId"]
+        if scan_run_id is None and c["guid"]:
+            scan_run_id = _get_entity_scan_run_id(endpoint, token, c["guid"])
+        if scan_run_id == run_id:
+            entities.append({
+                "guid": c["guid"],
+                "qualifiedName": c["qualifiedName"],
+                "entityType": c["entityType"],
+            })
+        else:
+            logger.warning(
+                f"Skipping search hit whose scanRunId != {run_id} "
+                f"(scanRunId={scan_run_id!r}): "
+                f"[{c.get('entityType', 'unknown')}] {c.get('qualifiedName', 'unknown')}"
+            )
+
     return entities
  
  
 def delete_entities(endpoint: str, token: str, entities: list) -> int:
     """Soft-delete entities in batches by GUID.
  
-    Uses: DELETE {endpoint}/api/atlas/v2/entity/bulk?guid=...&guid=...
+    Uses: DELETE {endpoint}/api/atlas/v2/entity/bulk?api-version=2023-09-01&guid=...&guid=...
     Returns the number of GUIDs submitted for deletion.
     """
     import requests
@@ -178,7 +227,11 @@ def delete_entities(endpoint: str, token: str, entities: list) -> int:
  
     for i in range(0, len(guids), DELETE_BATCH_SIZE):
         batch = guids[i : i + DELETE_BATCH_SIZE]
-        params = [("guid", g) for g in batch]
+        # entity/bulk 404s without api-version. Add it to params (not the URL
+        # string) so requests builds the whole query string — api-version and
+        # the repeated guid params are joined with correct ?/& automatically:
+        #   .../entity/bulk?api-version=2023-09-01&guid=...&guid=...
+        params = [("api-version", "2023-09-01")] + [("guid", g) for g in batch]
         url = f"{endpoint}/api/atlas/v2/entity/bulk"
         resp = requests.delete(url, params=params, headers=headers, timeout=60)
         resp.raise_for_status()
