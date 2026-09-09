@@ -367,23 +367,30 @@ class _DryRunResponse:
         return None
 
 
-def _request_with_retry(method: str, url: str, dry_run_payload=None, **kwargs):
+def _request_with_retry(method: str, url: str, dry_run_payload=None, force_dry_run: bool = False, **kwargs):
     """HTTP request with exponential backoff, for BOTH live and dry-run.
- 
+
+    In live mode (simulate false) it calls requests.request (lazy-imported); in
+    dry-run it returns a _DryRunResponse built from `dry_run_payload` (a value or
+    zero-arg callable), so the same validated, timed-out, retry-wrapped path is
+    exercised without live credentials or the requests dependency. Setting
+    force_dry_run simulates a single call even when DRY_RUN is false.
+
     Retries on 429 (honoring Retry-After — important for shared source-API
     quotas like Salesforce daily limits), transient 5xx, and connection or
-    timeout errors. Requires the `requests` import to be uncommented.
- 
-    Usage in live mode (replaces bare requests.get/post calls):
+    timeout errors.
+
+    Usage (replaces bare requests.get/post calls):
         response = _request_with_retry("GET", url, headers=headers)
         response = _request_with_retry("POST", url, json=payload, headers=headers)
     """
     import time
     import random
+    simulate = DRY_RUN or force_dry_run
     kwargs.setdefault("timeout", REQUEST_TIMEOUT)
     for attempt in range(MAX_RETRIES + 1):
         try:
-            if DRY_RUN:
+            if simulate:
                 # Simulated transport: exercises the OAuth1 auth, timeout, and
                 # this retry/backoff wrapper without a live endpoint.
                 logger.info(
@@ -392,7 +399,8 @@ def _request_with_retry(method: str, url: str, dry_run_payload=None, **kwargs):
                 payload = dry_run_payload() if callable(dry_run_payload) else dry_run_payload
                 response = _DryRunResponse(payload, url, method, kwargs["timeout"])
             else:
-                response = requests.request(method, url, **kwargs)  # noqa: F821 (live mode)
+                import requests  # lazy: live path only, so dry-run needs no dependency
+                response = requests.request(method, url, **kwargs)
             if response.status_code == 429 or 500 <= response.status_code < 600:
                 if attempt == MAX_RETRIES:
                     response.raise_for_status()
@@ -410,7 +418,7 @@ def _request_with_retry(method: str, url: str, dry_run_payload=None, **kwargs):
             # Check for transient network errors from requests library
             # Import check: requests may not be available in dry-run mode
             is_retryable = False
-            if not DRY_RUN:
+            if not simulate:
                 import requests.exceptions
                 is_retryable = isinstance(exc, (
                     requests.exceptions.ConnectionError,
@@ -745,12 +753,20 @@ class PurviewAuthService:
         self.config = config
  
     def get_bearer_token(self) -> str:
-        # --- Uncomment for real usage ---
-        # credential = DefaultAzureCredential()
-        # token = credential.get_token("https://purview.azure.net/.default")
-        # return token.token
-        logger.info("[DRY RUN] Would acquire Purview bearer token via DefaultAzureCredential")
-        return "dry-run-purview-token"
+        """Get a bearer token for direct REST API calls.
+
+        Runtime-branched (no hand-uncommenting): dry-run returns a stub token;
+        live mode acquires a real token via DefaultAzureCredential (lazy-imported
+        so the dry-run path needs no azure-identity dependency).
+        """
+        if DRY_RUN:
+            logger.info("[DRY RUN] Would acquire Purview bearer token via DefaultAzureCredential")
+            return "dry-run-purview-token"
+
+        from azure.identity import DefaultAzureCredential  # lazy: live path only
+        credential = DefaultAzureCredential()
+        token = credential.get_token("https://purview.azure.net/.default")
+        return token.token
  
  
 class NetSuiteAuthService:
@@ -773,18 +789,24 @@ class NetSuiteAuthService:
         Usage:
             auth = ns_auth.get_auth()
             response = requests.get(url, auth=auth)
+
+        Runtime-branched (no hand-uncommenting): dry-run returns None (the
+        simulated transport ignores it); live mode returns a real OAuth1 signer
+        (requests-oauthlib lazy-imported so the dry-run path needs no dependency).
         """
-        # --- Uncomment for real usage ---
-        # return OAuth1(
-        #     client_key=self.config.consumer_key,
-        #     client_secret=self.config.consumer_secret,
-        #     resource_owner_key=self.config.token_id,
-        #     resource_owner_secret=self.config.token_secret,
-        #     realm=self.config.account_id,
-        #     signature_method="HMAC-SHA256",
-        # )
-        logger.info(f"[DRY RUN] Would create OAuth1 auth for NetSuite account: {self.config.account_id}")
-        return None
+        if DRY_RUN:
+            logger.info(f"[DRY RUN] Would create OAuth1 auth for NetSuite account: {self.config.account_id}")
+            return None
+
+        from requests_oauthlib import OAuth1  # lazy: live path only
+        return OAuth1(
+            client_key=self.config.consumer_key,
+            client_secret=self.config.consumer_secret,
+            resource_owner_key=self.config.token_id,
+            resource_owner_secret=self.config.token_secret,
+            realm=self.config.account_id,
+            signature_method="HMAC-SHA256",
+        )
  
     def get_headers(self) -> dict:
         """Standard headers for NetSuite REST API calls."""
