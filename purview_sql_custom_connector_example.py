@@ -90,13 +90,27 @@ logger = logging.getLogger(__name__)
 # to every Purview request.
 REQUEST_TIMEOUT = (10, 30)
 
+# Purview Data Map REST API version. The /entity/bulk route (and the other
+# /entity/* routes) 404 without this query parameter; only /types/typedefs
+# resolves without it. Kept configurable so the version can be pinned per
+# environment without a code change.
+PURVIEW_API_VERSION = os.environ.get("PURVIEW_API_VERSION", "2023-09-01")
+
 # Dry-run transport toggle. When true (the default for these examples), HTTP
 # calls are simulated by _DryRunResponse *through the same request path* used in
 # live mode — so identifier validation, the timeout, the bearer token, and the
 # retry/backoff wrapper are all genuinely exercised without real credentials.
 # Live mode: set CONNECTOR_DRY_RUN=false and uncomment `import requests`.
 DRY_RUN = os.environ.get("CONNECTOR_DRY_RUN", "true").strip().lower() != "false"
- 
+
+# Classification-attachment toggle. Classifications are always computed and
+# logged, but attaching them to an entity requires the matching classification
+# typedefs (e.g. MICROSOFT.PERSONAL.EMAIL) to exist in the target Purview
+# account — otherwise /entity/bulk 404s on the unknown type. Set to "false" to
+# create entities in accounts where those classification types aren't
+# provisioned; the computed classifications are still logged, just not attached.
+APPLY_CLASSIFICATIONS = os.environ.get("CONNECTOR_APPLY_CLASSIFICATIONS", "true").strip().lower() != "false"
+
 def _validate_identifier(value: str, allow_list: list = None) -> str:
     """Validate that a string is a safe SQL/API identifier."""
     if allow_list and value not in allow_list:
@@ -466,15 +480,29 @@ class AuthService:
         """Get a bearer token for direct REST API calls.
 
         Runtime-branched (no hand-uncommenting): dry-run returns a stub token;
-        live mode acquires a real token via DefaultAzureCredential (lazy-imported
-        so the dry-run path needs no azure-identity dependency).
+        live mode acquires a real token (azure-identity lazy-imported so the
+        dry-run path needs no dependency).
+
+        Credential selection (live path only):
+        - PURVIEW_USE_CLI_CREDENTIAL=true -> AzureCliCredential. Needed in
+          environments like Azure Cloud Shell, where DefaultAzureCredential
+          resolves to a token Purview rejects with 401 even though the CLI
+          token (same identity, same audience) is accepted.
+        - otherwise -> DefaultAzureCredential, so production Managed Identity
+          continues to work unchanged.
         """
         if DRY_RUN:
             logger.info("[DRY RUN] Would acquire bearer token via DefaultAzureCredential")
             return "dry-run-token"
 
-        from azure.identity import DefaultAzureCredential  # lazy: live path only
-        credential = DefaultAzureCredential()
+        from azure.identity import DefaultAzureCredential, AzureCliCredential  # lazy: live path only
+        use_cli = os.environ.get("PURVIEW_USE_CLI_CREDENTIAL", "false").strip().lower() == "true"
+        if use_cli:
+            logger.info("Acquiring Purview bearer token via AzureCliCredential")
+            credential = AzureCliCredential()
+        else:
+            logger.info("Acquiring Purview bearer token via DefaultAzureCredential")
+            credential = DefaultAzureCredential()
         token = credential.get_token("https://purview.azure.net/.default")
         return token.token
  
@@ -497,7 +525,7 @@ class TypeDefService:
                 "category": "ENTITY",
                 "name": "custom_sql_server",
                 "description": "A custom SQL Server instance",
-                "superTypes": ["Server"],
+                "superTypes": ["Asset"],
                 "typeVersion": "1.0",
                 "attributeDefs": [
                     {
@@ -661,11 +689,27 @@ class TypeDefService:
             "Content-Type": "application/json",
         }
         url = f"{self.config.endpoint}/api/atlas/v2/types/typedefs"
-        _request_with_retry(
-            "POST", url, headers=headers, json=self.CUSTOM_TYPES,
-            dry_run_payload=lambda: self.CUSTOM_TYPES,
-        )
-        logger.info(f"Registered {len(self.CUSTOM_TYPES['entityDefs'])} type definitions:")
+        # Idempotent registration. The typedef POST is create-only: Atlas returns
+        # 409 Conflict when the types already exist, so re-running the connector
+        # would otherwise fail here. Treat the 409 as success (types already
+        # present) and continue; any other error still propagates. The
+        # retry/timeout wrapper and dry-run path are untouched — only the
+        # already-exists case is caught.
+        try:
+            _request_with_retry(
+                "POST", url, headers=headers, json=self.CUSTOM_TYPES,
+                dry_run_payload=lambda: self.CUSTOM_TYPES,
+            )
+            logger.info(f"Registered {len(self.CUSTOM_TYPES['entityDefs'])} type definitions:")
+        except Exception as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code == 409:
+                logger.info(
+                    f"Custom types already registered (HTTP 409); continuing: "
+                    f"{[td['name'] for td in self.CUSTOM_TYPES['entityDefs']]}"
+                )
+            else:
+                raise
         for td in self.CUSTOM_TYPES["entityDefs"]:
             logger.info(f"  - {td['name']} (superType: {td['superTypes'][0]})")
         return self.CUSTOM_TYPES
@@ -753,7 +797,7 @@ class EntityService:
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             }
-            url = f"{self.config.endpoint}/api/atlas/v2/entity/bulk"
+            url = f"{self.config.endpoint}/api/atlas/v2/entity/bulk?api-version={PURVIEW_API_VERSION}"
             response = _request_with_retry(
                 "POST", url, headers=headers, json=payload,
                 dry_run_payload=lambda p=payload: p,
@@ -867,7 +911,7 @@ class LineageService:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
-        url = f"{self.config.endpoint}/api/atlas/v2/entity/bulk"
+        url = f"{self.config.endpoint}/api/atlas/v2/entity/bulk?api-version={PURVIEW_API_VERSION}"
         response = _request_with_retry(
             "POST", url, headers=headers, json=payload,
             dry_run_payload=lambda: payload,
@@ -916,7 +960,7 @@ class MetadataService:
             "Content-Type": "application/json",
         }
         url = (f"{self.config.endpoint}/api/atlas/v2/entity/guid/{entity_guid}"
-               f"/businessmetadata?isOverwrite=true")
+               f"/businessmetadata?isOverwrite=true&api-version={PURVIEW_API_VERSION}")
         _request_with_retry(
             "POST", url, headers=headers, json=metadata,
             dry_run_payload=lambda: metadata,
@@ -941,7 +985,7 @@ class MetadataService:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
-        url = f"{self.config.endpoint}/api/atlas/v2/entity/guid/{entity_guid}/classifications"
+        url = f"{self.config.endpoint}/api/atlas/v2/entity/guid/{entity_guid}/classifications?api-version={PURVIEW_API_VERSION}"
         _request_with_retry(
             "POST", url, headers=headers, json=classifications,
             dry_run_payload=lambda: {"classifications": classifications},
@@ -1069,7 +1113,16 @@ class SQLServerConnector:
             name_key="name",
             type_key="type",
         )
- 
+        # Classifications are always computed and logged by the engine above.
+        # APPLY_CLASSIFICATIONS gates only whether they are attached to the
+        # entity payload (attaching requires the classification typedefs to
+        # exist in the target account).
+        if not APPLY_CLASSIFICATIONS:
+            logger.info(
+                "CONNECTOR_APPLY_CLASSIFICATIONS=false: computing and logging "
+                "classifications but NOT attaching them to entities."
+            )
+
         for col in columns:
             col_class = col_classifications.get(col["name"])
             assets.append(SourceAsset(
@@ -1081,7 +1134,7 @@ class SQLServerConnector:
                     "isNullable": col["nullable"],
                     "isPrimaryKey": col["pk"],
                 },
-                classifications=[col_class] if col_class else [],
+                classifications=([col_class] if col_class else []) if APPLY_CLASSIFICATIONS else [],
             ))
  
         logger.info(f"Discovered {len(assets)} assets")
