@@ -206,12 +206,43 @@ logger = logging.getLogger(__name__)
 # Tuple (connect_timeout, read_timeout); applied by _request_with_retry.
 REQUEST_TIMEOUT = (10, 30)
 
+# Purview Data Map REST API version. The /entity/bulk route (and the other
+# /entity/* routes) 404 without this query parameter; only /types/typedefs
+# resolves without it. Kept configurable so the version can be pinned per
+# environment without a code change. NOTE: distinct from WORKDAY_API_VERSION
+# (the source-side Workday REST API version) — this one is Purview's.
+PURVIEW_API_VERSION = os.environ.get("PURVIEW_API_VERSION", "2023-09-01")
+
 # Dry-run transport toggle. When true (default), HTTP calls are simulated by
 # _DryRunResponse *through the same request path* used in live mode — so URL/
 # identifier validation, the timeout, the token lifecycle, and the retry/backoff
 # wrapper are all genuinely exercised without real credentials.
 # Live mode: set CONNECTOR_DRY_RUN=false and uncomment `import requests`.
 DRY_RUN = os.environ.get("CONNECTOR_DRY_RUN", "true").strip().lower() != "false"
+
+# Source-read live toggle. Independent of CONNECTOR_DRY_RUN so the Purview-write
+# path can run live while source-system reads (the Workday OAuth token POST) stay
+# simulated — the Data-Map integration can be tested against a real Purview
+# account without a real Workday tenant or Key Vault. Source reads go live only
+# when BOTH CONNECTOR_DRY_RUN=false AND CONNECTOR_LIVE_SOURCE=true.
+LIVE_SOURCE = os.environ.get("CONNECTOR_LIVE_SOURCE", "false").strip().lower() == "true"
+SOURCE_DRY_RUN = DRY_RUN or not LIVE_SOURCE
+
+# Classification-attachment toggle. Classifications are always computed and
+# logged, but attaching them to an entity requires the matching classification
+# typedefs (e.g. MICROSOFT.PERSONAL.EMAIL) to exist in the target Purview
+# account — otherwise /entity/bulk 404s on the unknown type. Set to "false" to
+# create entities in accounts where those classification types aren't
+# provisioned; the computed classifications are still logged, just not attached.
+APPLY_CLASSIFICATIONS = os.environ.get("CONNECTOR_APPLY_CLASSIFICATIONS", "true").strip().lower() != "false"
+
+# Lineage-apply toggle. Cross-system lineage processes reference downstream
+# output entities (e.g. dwh://analytics-warehouse/hr/dim_employee, ad://...) that
+# live in other systems and may not exist in the catalog during single-connector
+# testing — Purview 400s on those dangling references. Set to "false" to still
+# build and log the lineage mappings (intent stays visible) while skipping the
+# POST, so isolated test runs don't fail on cross-system references.
+APPLY_LINEAGE = os.environ.get("CONNECTOR_APPLY_LINEAGE", "true").strip().lower() != "false"
 
 
 def _validate_identifier(value: str, allow_list: list = None) -> str:
@@ -746,13 +777,21 @@ class PurviewAuthService:
     def __init__(self, config): self.config = config
     def get_bearer_token(self):
         # Runtime-branched: dry-run returns a stub token; live mode acquires a
-        # real token via lazy-imported DefaultAzureCredential (so the dry-run
-        # path needs no azure-identity dependency).
+        # real token (azure-identity lazy-imported). PURVIEW_USE_CLI_CREDENTIAL=
+        # true selects AzureCliCredential (needed where DefaultAzureCredential
+        # resolves to a token Purview 401s, e.g. Azure Cloud Shell); otherwise
+        # DefaultAzureCredential, so production Managed Identity is unchanged.
         if DRY_RUN:
             logger.info("[DRY RUN] Would acquire Purview bearer token via DefaultAzureCredential")
             return "dry-run-purview-token"
-        from azure.identity import DefaultAzureCredential  # lazy: live path only
-        credential = DefaultAzureCredential()
+        from azure.identity import DefaultAzureCredential, AzureCliCredential  # lazy: live path only
+        use_cli = os.environ.get("PURVIEW_USE_CLI_CREDENTIAL", "false").strip().lower() == "true"
+        if use_cli:
+            logger.info("Acquiring Purview bearer token via AzureCliCredential")
+            credential = AzureCliCredential()
+        else:
+            logger.info("Acquiring Purview bearer token via DefaultAzureCredential")
+            credential = DefaultAzureCredential()
         return credential.get_token("https://purview.azure.net/.default").token
  
 class WorkdayAuthService:
@@ -779,6 +818,7 @@ class WorkdayAuthService:
                   "client_secret": self.config.client_secret,
                   "refresh_token": self.config.refresh_token},
             dry_run_payload=lambda: {"access_token": "dry-run-wd-token", "expires_in": 3600},
+            force_dry_run=SOURCE_DRY_RUN,
         )
         token_data = response.json()
         self.config.access_token = token_data["access_token"]
@@ -841,7 +881,7 @@ class WorkdayDiscoveryService:
 class TypeDefService:
     WORKDAY_TYPES = {"entityDefs": [
         {"category": "ENTITY", "name": "custom_workday_tenant", "description": "A Workday tenant",
-         "superTypes": ["Server"], "typeVersion": "1.0", "attributeDefs": [
+         "superTypes": ["Asset"], "typeVersion": "1.0", "attributeDefs": [
              {"name": "tenantName", "typeName": "string", "isOptional": True, "cardinality": "SINGLE", "isUnique": False, "isIndexable": True},
              {"name": "tenantUrl", "typeName": "string", "isOptional": True, "cardinality": "SINGLE", "isUnique": False, "isIndexable": True},
              {"name": "apiVersion", "typeName": "string", "isOptional": True, "cardinality": "SINGLE", "isUnique": False, "isIndexable": True},
@@ -887,9 +927,19 @@ class TypeDefService:
         names = [t["name"] for t in TypeDefService.WORKDAY_TYPES["entityDefs"]]
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         url = f"{endpoint}/api/atlas/v2/types/typedefs"
-        _request_with_retry("POST", url, headers=headers, json=TypeDefService.WORKDAY_TYPES,
-                            dry_run_payload=lambda: TypeDefService.WORKDAY_TYPES)
-        logger.info(f"Registered {len(names)} types: {names}")
+        # Idempotent registration: the typedef POST is create-only, so Atlas
+        # returns 409 when the types already exist. Treat 409 as success (types
+        # already present) and continue; re-raise everything else.
+        try:
+            _request_with_retry("POST", url, headers=headers, json=TypeDefService.WORKDAY_TYPES,
+                                dry_run_payload=lambda: TypeDefService.WORKDAY_TYPES)
+            logger.info(f"Registered {len(names)} types: {names}")
+        except Exception as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code == 409:
+                logger.info(f"Workday types already registered (HTTP 409); continuing: {names}")
+            else:
+                raise
         return TypeDefService.WORKDAY_TYPES
  
 class EntityService:
@@ -909,7 +959,7 @@ class EntityService:
     @staticmethod
     def create_entities_bulk(endpoint, token, entities):
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        url = f"{endpoint}/api/atlas/v2/entity/bulk"
+        url = f"{endpoint}/api/atlas/v2/entity/bulk?api-version={PURVIEW_API_VERSION}"
         for i in range(0, len(entities), EntityService.BATCH_SIZE):
             batch = entities[i:i+EntityService.BATCH_SIZE]
             _request_with_retry("POST", url, headers=headers, json={"entities": batch},
@@ -930,14 +980,14 @@ class MetadataService:
     @staticmethod
     def apply_business_metadata(endpoint, token, guid, metadata):
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        url = f"{endpoint}/api/atlas/v2/entity/guid/{guid}/businessmetadata?isOverwrite=true"
+        url = f"{endpoint}/api/atlas/v2/entity/guid/{guid}/businessmetadata?isOverwrite=true&api-version={PURVIEW_API_VERSION}"
         _request_with_retry("POST", url, headers=headers, json=metadata,
                             dry_run_payload=lambda: {"guid": guid})
         logger.info(f"Applied business metadata to {guid}: {metadata}")
     @staticmethod
     def apply_classification(endpoint, token, guid, classification):
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        url = f"{endpoint}/api/atlas/v2/entity/guid/{guid}/classifications"
+        url = f"{endpoint}/api/atlas/v2/entity/guid/{guid}/classifications?api-version={PURVIEW_API_VERSION}"
         _request_with_retry("POST", url, headers=headers, json=[{"typeName": classification}],
                             dry_run_payload=lambda: {"guid": guid})
         logger.info(f"Applied classification '{classification}' to {guid}")
@@ -978,7 +1028,11 @@ class WorkdayConnector:
         classification_engine = ClassificationEngine()
         logger.info(f"Classification engine loaded: {classification_engine.get_stats()['total']} rules")
         all_entities = []
- 
+        # (qualifiedName, [classificationTypeName]) for every field the engine
+        # classified — tracked independently of APPLY_CLASSIFICATIONS so the
+        # computed classifications are logged/counted even when not attached.
+        classified_field_log = []
+
         # Tenant entity
         all_entities.append(EntityService.build_entity("custom_workday_tenant",
             f"workday://{self.label}", f"Workday - {self.label}",
@@ -1001,11 +1055,14 @@ class WorkdayConnector:
                 fclass = classification_engine.classify_field(
                     source="workday", object_name=name,
                     field_name=fname, field_type=fld.get("type"))
+                fld_qn = f"workday://{self.label}/{name}/{fname}"
+                if fclass:
+                    classified_field_log.append((fld_qn, [fclass]))
                 all_entities.append(EntityService.build_entity("custom_workday_field",
-                    f"workday://{self.label}/{name}/{fname}", fld["label"],
+                    fld_qn, fld["label"],
                     f"Field {fname} on {name} (type: {fld['type']})",
                     {"fieldType": fld["type"], "isPII": fld.get("isPII", False), "referenceTo": ""},
-                    classifications=[fclass] if fclass else None))
+                    classifications=([fclass] if fclass else None) if APPLY_CLASSIFICATIONS else None))
  
         # LLM04: warn if asset descriptions drifted since the last run
         _check_metadata_drift(
@@ -1027,7 +1084,14 @@ class WorkdayConnector:
                 src_qns, ["custom_workday_object"]*len(m["source_objects"]),
                 [m["destination_table"]], [m["destination_type"]], m.get("description",""), "Daily 2:00 AM UTC"))
             logger.info(f"  Lineage: {m['source_objects']} -> {m['process_name']} -> {m['destination_table']}")
-        EntityService.create_entities_bulk(ep, token, procs)
+        if APPLY_LINEAGE:
+            EntityService.create_entities_bulk(ep, token, procs)
+        else:
+            logger.info(
+                "CONNECTOR_APPLY_LINEAGE=false: built and logged lineage mappings "
+                "but NOT posting them (skips the entity-bulk POST to avoid 400s on "
+                "cross-system output entities absent from the catalog)."
+            )
  
         # Step 6: Metadata & classifications
         logger.info("\n--- Step 6: Apply Business Metadata and Classifications ---")
@@ -1044,14 +1108,18 @@ class WorkdayConnector:
                 "sources (data-quality jobs, ownership registries) before enabling."
             )
  
-        # Classifications were attached at entity-build time by the shared
-        # ClassificationEngine (classification_rules.json) — no hardcoded
-        # PII field lists. Log what the engine classified.
-        classified = [e for e in all_entities if e.get("classifications")]
-        for e in classified:
-            logger.info(f"  Classified {e['attributes']['qualifiedName']} -> "
-                        f"{[c['typeName'] for c in e['classifications']]}")
-        pii_count = len(classified)
+        # Classifications are computed by the shared ClassificationEngine
+        # (classification_rules.json) — no hardcoded PII field lists. Log what
+        # the engine classified regardless of whether they were attached to the
+        # entity payload (see APPLY_CLASSIFICATIONS).
+        if not APPLY_CLASSIFICATIONS:
+            logger.info(
+                "CONNECTOR_APPLY_CLASSIFICATIONS=false: computing and logging "
+                "classifications but NOT attaching them to entities."
+            )
+        for qualified_name, class_types in classified_field_log:
+            logger.info(f"  Classified {qualified_name} -> {class_types}")
+        pii_count = len(classified_field_log)
  
         # Summary
         field_count = sum(len(OBJECT_METADATA.get(o["name"],{}).get("fields",[])) for o in objects)
