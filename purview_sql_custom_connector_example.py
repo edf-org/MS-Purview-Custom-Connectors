@@ -203,7 +203,8 @@ def _request_with_retry(method: str, url: str, dry_run_payload=None, **kwargs):
                 payload = dry_run_payload() if callable(dry_run_payload) else dry_run_payload
                 response = _DryRunResponse(payload, url, method, kwargs["timeout"])
             else:
-                response = requests.request(method, url, **kwargs)  # noqa: F821 (live mode)
+                import requests  # lazy: live path only, so dry-run needs no dependency
+                response = requests.request(method, url, **kwargs)
             if response.status_code == 429 or 500 <= response.status_code < 600:
                 if attempt == MAX_RETRIES:
                     response.raise_for_status()
@@ -462,13 +463,20 @@ class AuthService:
         return None
  
     def get_bearer_token(self) -> str:
-        """Get a bearer token for direct REST API calls."""
-        # --- Uncomment for real usage ---
-        # credential = DefaultAzureCredential()
-        # token = credential.get_token("https://purview.azure.net/.default")
-        # return token.token
-        logger.info("[DRY RUN] Would acquire bearer token via DefaultAzureCredential")
-        return "dry-run-token"
+        """Get a bearer token for direct REST API calls.
+
+        Runtime-branched (no hand-uncommenting): dry-run returns a stub token;
+        live mode acquires a real token via DefaultAzureCredential (lazy-imported
+        so the dry-run path needs no azure-identity dependency).
+        """
+        if DRY_RUN:
+            logger.info("[DRY RUN] Would acquire bearer token via DefaultAzureCredential")
+            return "dry-run-token"
+
+        from azure.identity import DefaultAzureCredential  # lazy: live path only
+        credential = DefaultAzureCredential()
+        token = credential.get_token("https://purview.azure.net/.default")
+        return token.token
  
  
 # =============================================================================
