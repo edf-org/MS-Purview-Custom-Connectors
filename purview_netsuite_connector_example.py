@@ -257,12 +257,42 @@ logger = logging.getLogger(__name__)
 # Tuple (connect_timeout, read_timeout); applied by _request_with_retry.
 REQUEST_TIMEOUT = (10, 30)
 
+# Purview Data Map REST API version. The /entity/bulk route (and the other
+# /entity/* routes) 404 without this query parameter; only /types/typedefs
+# resolves without it. Kept configurable so the version can be pinned per
+# environment without a code change.
+PURVIEW_API_VERSION = os.environ.get("PURVIEW_API_VERSION", "2023-09-01")
+
 # Dry-run transport toggle. When true (default), HTTP calls are simulated by
 # _DryRunResponse *through the same request path* used in live mode — so
 # identifier validation, the timeout, the OAuth1 auth object, and the
 # retry/backoff wrapper are all genuinely exercised without real credentials.
 # Live mode: set CONNECTOR_DRY_RUN=false and uncomment the requests import.
 DRY_RUN = os.environ.get("CONNECTOR_DRY_RUN", "true").strip().lower() != "false"
+
+# Source-read live toggle. Independent of CONNECTOR_DRY_RUN so the Purview-write
+# path can run live while source-system reads (NetSuite discovery) stay
+# simulated — the Data-Map integration can be tested against a real Purview
+# account without a real NetSuite account or Key Vault. Source reads go live only
+# when BOTH CONNECTOR_DRY_RUN=false AND CONNECTOR_LIVE_SOURCE=true.
+LIVE_SOURCE = os.environ.get("CONNECTOR_LIVE_SOURCE", "false").strip().lower() == "true"
+SOURCE_DRY_RUN = DRY_RUN or not LIVE_SOURCE
+
+# Classification-attachment toggle. Classifications are always computed and
+# logged, but attaching them to an entity requires the matching classification
+# typedefs (e.g. MICROSOFT.PERSONAL.EMAIL) to exist in the target Purview
+# account — otherwise /entity/bulk 404s on the unknown type. Set to "false" to
+# create entities in accounts where those classification types aren't
+# provisioned; the computed classifications are still logged, just not attached.
+APPLY_CLASSIFICATIONS = os.environ.get("CONNECTOR_APPLY_CLASSIFICATIONS", "true").strip().lower() != "false"
+
+# Lineage-apply toggle. Cross-system lineage processes reference downstream
+# output entities (e.g. dwh://analytics-warehouse/finance/fact_revenue) that live
+# in other systems and may not exist in the catalog during single-connector
+# testing — Purview 400s on those dangling references. Set to "false" to still
+# build and log the lineage mappings (intent stays visible) while skipping the
+# POST, so isolated test runs don't fail on cross-system references.
+APPLY_LINEAGE = os.environ.get("CONNECTOR_APPLY_LINEAGE", "true").strip().lower() != "false"
 
 
 def _validate_identifier(value: str, allow_list: list = None) -> str:
@@ -756,15 +786,29 @@ class PurviewAuthService:
         """Get a bearer token for direct REST API calls.
 
         Runtime-branched (no hand-uncommenting): dry-run returns a stub token;
-        live mode acquires a real token via DefaultAzureCredential (lazy-imported
-        so the dry-run path needs no azure-identity dependency).
+        live mode acquires a real token (azure-identity lazy-imported so the
+        dry-run path needs no dependency).
+
+        Credential selection (live path only):
+        - PURVIEW_USE_CLI_CREDENTIAL=true -> AzureCliCredential. Needed in
+          environments like Azure Cloud Shell, where DefaultAzureCredential
+          resolves to a token Purview rejects with 401 even though the CLI
+          token (same identity, same audience) is accepted.
+        - otherwise -> DefaultAzureCredential, so production Managed Identity
+          continues to work unchanged.
         """
         if DRY_RUN:
             logger.info("[DRY RUN] Would acquire Purview bearer token via DefaultAzureCredential")
             return "dry-run-purview-token"
 
-        from azure.identity import DefaultAzureCredential  # lazy: live path only
-        credential = DefaultAzureCredential()
+        from azure.identity import DefaultAzureCredential, AzureCliCredential  # lazy: live path only
+        use_cli = os.environ.get("PURVIEW_USE_CLI_CREDENTIAL", "false").strip().lower() == "true"
+        if use_cli:
+            logger.info("Acquiring Purview bearer token via AzureCliCredential")
+            credential = AzureCliCredential()
+        else:
+            logger.info("Acquiring Purview bearer token via DefaultAzureCredential")
+            credential = DefaultAzureCredential()
         token = credential.get_token("https://purview.azure.net/.default")
         return token.token
  
@@ -877,6 +921,7 @@ class NetSuiteDiscoveryService:
         response = _request_with_retry(
             "GET", url, auth=self.auth.get_auth(), headers=self.auth.get_headers(),
             dry_run_payload=lambda: {"fields": self._get_simulated_fields(record_type)},
+            force_dry_run=SOURCE_DRY_RUN,
         )
 
         # In dry-run mode, the payload contains a pre-built "fields" array.
@@ -949,6 +994,7 @@ class NetSuiteDiscoveryService:
             "POST", url, json=payload, auth=self.auth.get_auth(),
             headers={**self.auth.get_headers(), "Prefer": "transient"},
             dry_run_payload=lambda: {"items": [{"cnt": counts.get(record_type, 0)}]},
+            force_dry_run=SOURCE_DRY_RUN,
         )
         items = response.json().get("items", [])
         return items[0].get("cnt", 0) if items else 0
@@ -1039,7 +1085,7 @@ class TypeDefService:
             {
                 "category": "ENTITY", "name": "custom_netsuite_account",
                 "description": "An Oracle NetSuite account (instance)",
-                "superTypes": ["Server"], "typeVersion": "1.0",
+                "superTypes": ["Asset"], "typeVersion": "1.0",
                 "attributeDefs": [
                     {"name": "accountId", "typeName": "string", "isOptional": True,
                      "cardinality": "SINGLE", "isUnique": False, "isIndexable": True},
@@ -1118,9 +1164,22 @@ class TypeDefService:
         url = f"{purview_endpoint}/api/atlas/v2/types/typedefs"
         type_names = [t["name"] for t in TypeDefService.NETSUITE_TYPES["entityDefs"]]
         headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
-        _request_with_retry("POST", url, headers=headers, json=TypeDefService.NETSUITE_TYPES,
-                            dry_run_payload=lambda: TypeDefService.NETSUITE_TYPES)
-        logger.info(f"Registered {len(type_names)} types: {type_names}")
+        # Idempotent registration. The typedef POST is create-only: Atlas returns
+        # 409 Conflict when the types already exist, so re-running the connector
+        # would otherwise fail here. Treat the 409 as success (types already
+        # present) and continue; any other error still propagates. The
+        # retry/timeout wrapper and dry-run path are untouched — only the
+        # already-exists case is caught.
+        try:
+            _request_with_retry("POST", url, headers=headers, json=TypeDefService.NETSUITE_TYPES,
+                                dry_run_payload=lambda: TypeDefService.NETSUITE_TYPES)
+            logger.info(f"Registered {len(type_names)} types: {type_names}")
+        except Exception as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code == 409:
+                logger.info(f"NetSuite types already registered (HTTP 409); continuing: {type_names}")
+            else:
+                raise
         return TypeDefService.NETSUITE_TYPES
  
  
@@ -1148,7 +1207,7 @@ class EntityService:
  
     @staticmethod
     def create_entities_bulk(purview_endpoint, bearer_token, entities):
-        url = f"{purview_endpoint}/api/atlas/v2/entity/bulk"
+        url = f"{purview_endpoint}/api/atlas/v2/entity/bulk?api-version={PURVIEW_API_VERSION}"
         for i in range(0, len(entities), EntityService.BATCH_SIZE):
             batch = entities[i : i + EntityService.BATCH_SIZE]
             headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
@@ -1179,7 +1238,7 @@ class MetadataService:
     @staticmethod
     def apply_business_metadata(purview_endpoint, bearer_token, entity_guid, metadata):
         headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
-        url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/businessmetadata?isOverwrite=true"
+        url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/businessmetadata?isOverwrite=true&api-version={PURVIEW_API_VERSION}"
         _request_with_retry("POST", url, headers=headers, json=metadata,
                             dry_run_payload=lambda: {"guid": entity_guid})
         logger.info(f"Applied business metadata to entity {entity_guid}: {metadata}")
@@ -1187,7 +1246,7 @@ class MetadataService:
     @staticmethod
     def apply_classification(purview_endpoint, bearer_token, entity_guid, classification_name):
         headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}
-        url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/classifications"
+        url = f"{purview_endpoint}/api/atlas/v2/entity/guid/{entity_guid}/classifications?api-version={PURVIEW_API_VERSION}"
         _request_with_retry("POST", url, headers=headers, json=[{"typeName": classification_name}],
                             dry_run_payload=lambda: {"guid": entity_guid})
         logger.info(f"Applied classification '{classification_name}' to entity {entity_guid}")
@@ -1237,7 +1296,11 @@ class NetSuiteConnector:
         logger.info(f"Classification engine loaded: {classification_engine.get_stats()['total']} rules")
         all_entities = []
         record_details = {}
- 
+        # (qualifiedName, [classificationTypeName]) for every field the engine
+        # classified — tracked independently of APPLY_CLASSIFICATIONS so the
+        # computed classifications are logged/counted even when not attached.
+        classified_field_log = []
+
         # Account-level entity
         acct_qn = f"netsuite://{self.account_name}"
         all_entities.append(EntityService.build_entity(
@@ -1268,6 +1331,8 @@ class NetSuiteConnector:
                 fclass = classification_engine.classify_field(
                     source="netsuite", object_name=rt,
                     field_name=fname, field_type=fld.get("type"))
+                if fclass:
+                    classified_field_log.append((fld_qn, [fclass]))
                 all_entities.append(EntityService.build_entity(
                     "custom_netsuite_field", fld_qn,
                     fld.get("title", fname),
@@ -1275,7 +1340,7 @@ class NetSuiteConnector:
                     {"fieldType": fld["type"], "isRequired": fld.get("required", False),
                      "isReadOnly": fld.get("readOnly", False),
                      "isReference": fld["type"] == "object"},
-                    classifications=[fclass] if fclass else None,
+                    classifications=([fclass] if fclass else None) if APPLY_CLASSIFICATIONS else None,
                 ))
  
         # LLM04: warn if asset descriptions drifted since the last run
@@ -1304,7 +1369,14 @@ class NetSuiteConnector:
             ))
             logger.info(f"  Lineage: {mapping['source_records']} → {mapping['process_name']} → {mapping['destination_table']}")
  
-        EntityService.create_entities_bulk(purview_endpoint, purview_token, process_entities)
+        if APPLY_LINEAGE:
+            EntityService.create_entities_bulk(purview_endpoint, purview_token, process_entities)
+        else:
+            logger.info(
+                "CONNECTOR_APPLY_LINEAGE=false: built and logged lineage mappings "
+                "but NOT posting them (skips the entity-bulk POST to avoid 400s on "
+                "cross-system output entities absent from the catalog)."
+            )
  
         # Step 6: Apply metadata and classifications
         logger.info("\n--- Step 6: Apply Business Metadata and Classifications ---")
@@ -1323,13 +1395,17 @@ class NetSuiteConnector:
                 "sources (data-quality jobs, ownership registries) before enabling."
             )
  
-        # Classifications were attached at entity-build time by the shared
-        # ClassificationEngine (classification_rules.json) — no hardcoded
-        # sensitive-field lists. Log what the engine classified.
-        classified = [e for e in all_entities if e.get("classifications")]
-        for e in classified:
-            logger.info(f"  Classified {e['attributes']['qualifiedName']} -> "
-                        f"{[c['typeName'] for c in e['classifications']]}")
+        # Classifications are computed by the shared ClassificationEngine
+        # (classification_rules.json) — no hardcoded sensitive-field lists. Log
+        # what the engine classified regardless of whether they were attached to
+        # the entity payload (see APPLY_CLASSIFICATIONS).
+        if not APPLY_CLASSIFICATIONS:
+            logger.info(
+                "CONNECTOR_APPLY_CLASSIFICATIONS=false: computing and logging "
+                "classifications but NOT attaching them to entities."
+            )
+        for qualified_name, class_types in classified_field_log:
+            logger.info(f"  Classified {qualified_name} -> {class_types}")
  
         # Summary
         logger.info("\n" + "=" * 70)
@@ -1341,7 +1417,7 @@ class NetSuiteConnector:
         logger.info(f"  Field entities:        {field_count}")
         logger.info(f"  Process entities:      {len(process_entities)}")
         logger.info(f"  Total entities:        {len(all_entities) + len(process_entities)}")
-        logger.info(f"  Fields classified (engine): {len(classified)}")
+        logger.info(f"  Fields classified (engine): {len(classified_field_log)}")
  
  
 # =============================================================================
