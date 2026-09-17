@@ -1,6 +1,6 @@
 {
   "_metadata": {
-    "version": "1.5",
+    "version": "1.6",
     "description": "Classification rules for Purview custom connectors. Data stewards maintain this file.",
     "last_updated": "2026-09-17",
     "updated_by": "Data Governance Team",
@@ -186,19 +186,19 @@
       "pattern": "*salary*",
       "classification": "MICROSOFT.FINANCIAL.AMOUNT",
       "priority": 15,
-      "enabled": true
+      "enabled": false
     },
     {
       "pattern": "*annualrevenue*",
       "classification": "MICROSOFT.FINANCIAL.AMOUNT",
       "priority": 10,
-      "enabled": true
+      "enabled": false
     },
     {
       "pattern": "*annual_revenue*",
       "classification": "MICROSOFT.FINANCIAL.AMOUNT",
       "priority": 10,
-      "enabled": true
+      "enabled": false
     },
     {
       "pattern": "*ip_address*",
@@ -330,7 +330,7 @@
       "pattern": "*amount*",
       "classification": "MICROSOFT.FINANCIAL.AMOUNT",
       "priority": 10,
-      "enabled": true,
+      "enabled": false,
       "notes": "Covers SQL columns like TotalAmount where the API type (decimal) does not map to the 'currency' type rule."
     }
   ],
@@ -351,7 +351,7 @@
       "type": "currency",
       "classification": "MICROSOFT.FINANCIAL.AMOUNT",
       "priority": 5,
-      "enabled": true
+      "enabled": false
     },
     {
       "type": "url",
@@ -423,7 +423,7 @@
       "field": "AnnualRevenue",
       "classification": "MICROSOFT.FINANCIAL.AMOUNT",
       "priority": 50,
-      "enabled": true
+      "enabled": false
     },
     {
       "source": "salesforce",
@@ -431,7 +431,7 @@
       "field": "Amount",
       "classification": "MICROSOFT.FINANCIAL.AMOUNT",
       "priority": 50,
-      "enabled": true
+      "enabled": false
     },
     {
       "source": "workday",
