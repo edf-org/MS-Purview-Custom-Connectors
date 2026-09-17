@@ -1,8 +1,8 @@
 {
   "_metadata": {
-    "version": "1.4",
+    "version": "1.5",
     "description": "Classification rules for Purview custom connectors. Data stewards maintain this file.",
-    "last_updated": "2026-07-14",
+    "last_updated": "2026-09-17",
     "updated_by": "Data Governance Team",
     "notes": [
       "Patterns marked enabled:false require the corresponding custom classification type to be created in Purview before enabling.",
@@ -19,7 +19,7 @@
     },
     {
       "pattern": "*phone*",
-      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "classification": "MICROSOFT.PERSONAL.US.PHONE_NUMBER",
       "priority": 10,
       "enabled": true
     },
@@ -62,25 +62,25 @@
     },
     {
       "pattern": "*ssn*",
-      "classification": "MICROSOFT.PERSONAL.US.SOCIAL_SECURITY_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.SOCIAL_SECURITY_NUMBER",
       "priority": 20,
       "enabled": true
     },
     {
       "pattern": "*social_security*",
-      "classification": "MICROSOFT.PERSONAL.US.SOCIAL_SECURITY_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.SOCIAL_SECURITY_NUMBER",
       "priority": 20,
       "enabled": true
     },
     {
       "pattern": "*national_id*",
-      "classification": "MICROSOFT.PERSONAL.NATIONAL_ID",
+      "classification": "MICROSOFT.GOVERNMENT.EU.NATIONAL_IDENTIFICATION_NUMBER",
       "priority": 20,
       "enabled": true
     },
     {
       "pattern": "*passport*",
-      "classification": "MICROSOFT.PERSONAL.PASSPORT_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.PASSPORT_NUMBER",
       "priority": 20,
       "enabled": true
     },
@@ -123,38 +123,38 @@
     },
     {
       "pattern": "*street_address*",
-      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "classification": "MICROSOFT.PERSONAL.PHYSICALADDRESS",
       "priority": 12,
       "enabled": true
     },
     {
       "pattern": "*streetaddress*",
-      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "classification": "MICROSOFT.PERSONAL.PHYSICALADDRESS",
       "priority": 12,
       "enabled": true
     },
     {
       "pattern": "*street*",
-      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "classification": "MICROSOFT.PERSONAL.PHYSICALADDRESS",
       "priority": 6,
       "enabled": true,
       "note": "Broad pattern — priority lowered to 6 to reduce false positives on non-address fields (e.g. WallStreetFirm). Prefer the higher-priority *street_address* / *streetaddress* patterns where possible."
     },
     {
       "pattern": "*mailing*address*",
-      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "classification": "MICROSOFT.PERSONAL.PHYSICALADDRESS",
       "priority": 10,
       "enabled": true
     },
     {
       "pattern": "*postal*",
-      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "classification": "MICROSOFT.PERSONAL.PHYSICALADDRESS",
       "priority": 8,
       "enabled": true
     },
     {
       "pattern": "*zipcode*",
-      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "classification": "MICROSOFT.PERSONAL.PHYSICALADDRESS",
       "priority": 8,
       "enabled": true
     },
@@ -166,13 +166,13 @@
     },
     {
       "pattern": "*bank_account*",
-      "classification": "MICROSOFT.FINANCIAL.BANK_ACCOUNT_NUMBER",
+      "classification": "MICROSOFT.FINANCIAL.US.BANK_ACCOUNT_NUMBER",
       "priority": 20,
       "enabled": true
     },
     {
       "pattern": "*iban*",
-      "classification": "MICROSOFT.FINANCIAL.IBAN",
+      "classification": "MICROSOFT.FINANCIAL.INTERNATIONAL.BANK_ACCOUNT_NUMBER",
       "priority": 20,
       "enabled": true
     },
@@ -216,78 +216,78 @@
       "pattern": "*worker_id*",
       "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
       "priority": 10,
-      "enabled": true
+      "enabled": false
     },
     {
       "pattern": "*workerid*",
       "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
       "priority": 10,
-      "enabled": true
+      "enabled": false
     },
     {
       "pattern": "*employee_id*",
       "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
       "priority": 10,
-      "enabled": true
+      "enabled": false
     },
     {
       "pattern": "*tax_id*",
-      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.INDIVIDUAL_TAXPAYER_IDENTIFICATION_NUMBER",
       "priority": 20,
       "enabled": true
     },
     {
       "pattern": "*taxid*",
-      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.INDIVIDUAL_TAXPAYER_IDENTIFICATION_NUMBER",
       "priority": 20,
       "enabled": true
     },
     {
       "pattern": "tin",
-      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.INDIVIDUAL_TAXPAYER_IDENTIFICATION_NUMBER",
       "priority": 15,
       "enabled": true
     },
     {
       "pattern": "*_tin",
-      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.INDIVIDUAL_TAXPAYER_IDENTIFICATION_NUMBER",
       "priority": 15,
       "enabled": true
     },
     {
       "pattern": "tin_*",
-      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.INDIVIDUAL_TAXPAYER_IDENTIFICATION_NUMBER",
       "priority": 15,
       "enabled": true
     },
     {
       "pattern": "*_tin_*",
-      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.INDIVIDUAL_TAXPAYER_IDENTIFICATION_NUMBER",
       "priority": 15,
       "enabled": true,
       "note": "The previous broad '*tin*' pattern matched unrelated fields (e.g. marketing, accounting, routing, destination). These word-boundary variants avoid those false positives."
     },
     {
       "pattern": "*vat_number*",
-      "classification": "MICROSOFT.PERSONAL.TAX_IDENTIFICATION_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.INDIVIDUAL_TAXPAYER_IDENTIFICATION_NUMBER",
       "priority": 15,
       "enabled": true
     },
     {
       "pattern": "*routing_number*",
-      "classification": "MICROSOFT.FINANCIAL.BANK_ACCOUNT_NUMBER",
+      "classification": "MICROSOFT.FINANCIAL.US.BANK_ACCOUNT_NUMBER",
       "priority": 20,
       "enabled": true
     },
     {
       "pattern": "*driver_license*",
-      "classification": "MICROSOFT.PERSONAL.DRIVERS_LICENSE_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.DRIVERS_LICENSE_NUMBER",
       "priority": 20,
       "enabled": true
     },
     {
       "pattern": "*drivers_license*",
-      "classification": "MICROSOFT.PERSONAL.DRIVERS_LICENSE_NUMBER",
+      "classification": "MICROSOFT.GOVERNMENT.US.DRIVERS_LICENSE_NUMBER",
       "priority": 20,
       "enabled": true
     },
@@ -343,7 +343,7 @@
     },
     {
       "type": "phone",
-      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "classification": "MICROSOFT.PERSONAL.US.PHONE_NUMBER",
       "priority": 5,
       "enabled": true
     },
@@ -357,7 +357,7 @@
       "type": "url",
       "classification": "MICROSOFT.MISCELLANEOUS.URL",
       "priority": 3,
-      "enabled": true
+      "enabled": false
     }
   ],
   "object_field_rules": [
@@ -381,7 +381,7 @@
       "source": "salesforce",
       "object": "Contact",
       "field": "MailingStreet",
-      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "classification": "MICROSOFT.PERSONAL.PHYSICALADDRESS",
       "priority": 50,
       "enabled": true
     },
@@ -389,7 +389,7 @@
       "source": "salesforce",
       "object": "Contact",
       "field": "MailingCity",
-      "classification": "MICROSOFT.PERSONAL.ADDRESS",
+      "classification": "MICROSOFT.PERSONAL.PHYSICALADDRESS",
       "priority": 50,
       "enabled": true
     },
@@ -405,7 +405,7 @@
       "source": "salesforce",
       "object": "Lead",
       "field": "Phone",
-      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "classification": "MICROSOFT.PERSONAL.US.PHONE_NUMBER",
       "priority": 50,
       "enabled": true
     },
@@ -413,7 +413,7 @@
       "source": "salesforce",
       "object": "Account",
       "field": "Phone",
-      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "classification": "MICROSOFT.PERSONAL.US.PHONE_NUMBER",
       "priority": 50,
       "enabled": true
     },
@@ -439,7 +439,7 @@
       "field": "workerId",
       "classification": "MICROSOFT.PERSONAL.EMPLOYEE_ID",
       "priority": 50,
-      "enabled": true
+      "enabled": false
     },
     {
       "source": "workday",
@@ -461,7 +461,7 @@
       "source": "workday",
       "object": "Workers",
       "field": "primaryWorkPhone",
-      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "classification": "MICROSOFT.PERSONAL.US.PHONE_NUMBER",
       "priority": 50,
       "enabled": true
     },
@@ -477,7 +477,7 @@
       "source": "netsuite",
       "object": "customer",
       "field": "phone",
-      "classification": "MICROSOFT.PERSONAL.PHONE_NUMBER",
+      "classification": "MICROSOFT.PERSONAL.US.PHONE_NUMBER",
       "priority": 50,
       "enabled": true
     },
