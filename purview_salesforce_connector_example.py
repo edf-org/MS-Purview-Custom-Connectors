@@ -778,20 +778,44 @@ class SalesforceConfig:
  
     @classmethod
     def from_key_vault(cls, kv_url: str) -> "SalesforceConfig":
-        """Load Salesforce credentials from Azure Key Vault using Managed Identity."""
-        # --- Uncomment for real usage ---
-        # credential = DefaultAzureCredential()
-        # kv_client = SecretClient(vault_url=kv_url, credential=credential)
-        # return cls(
-        #     consumer_key=kv_client.get_secret("salesforce-consumer-key").value,
-        #     consumer_secret=kv_client.get_secret("salesforce-consumer-secret").value,
-        #     domain_url=kv_client.get_secret("salesforce-domain-url").value,
-        # )
-        logger.info(f"[DRY RUN] Would retrieve Salesforce credentials from Key Vault: {kv_url}")
+        """Load Salesforce credentials from Azure Key Vault.
+
+        Live only when the source-read path is live (SOURCE_DRY_RUN is False,
+        i.e. CONNECTOR_DRY_RUN=false AND CONNECTOR_LIVE_SOURCE=true); otherwise
+        returns simulated placeholder credentials without contacting Key Vault,
+        so dry-run and Purview-write-only runs need no Key Vault or secrets.
+
+        Credential selection mirrors the Purview side (get_bearer_token):
+        - PURVIEW_USE_CLI_CREDENTIAL=true -> AzureCliCredential. Needed in
+          Azure Cloud Shell, where DefaultAzureCredential resolves to the
+          managed identity, which lacks the "Key Vault Secrets User" role.
+        - otherwise -> DefaultAzureCredential, so production Managed Identity
+          works unchanged.
+
+        Requires the azure-identity and azure-keyvault-secrets packages
+        (imported lazily on the live path only).
+        """
+        if SOURCE_DRY_RUN:
+            logger.info(f"[DRY RUN] Would retrieve Salesforce credentials from Key Vault: {kv_url}")
+            return cls(
+                consumer_key="dry-run-consumer-key",
+                consumer_secret="dry-run-consumer-secret",
+                domain_url="https://mycompany.my.salesforce.com",
+            )
+
+        from azure.identity import DefaultAzureCredential, AzureCliCredential
+        from azure.keyvault.secrets import SecretClient
+        use_cli = os.environ.get("PURVIEW_USE_CLI_CREDENTIAL", "false").strip().lower() == "true"
+        credential = AzureCliCredential() if use_cli else DefaultAzureCredential()
+        logger.info(
+            f"Retrieving Salesforce credentials from Key Vault {kv_url} via "
+            f"{'AzureCliCredential' if use_cli else 'DefaultAzureCredential'}"
+        )
+        kv_client = SecretClient(vault_url=kv_url, credential=credential)
         return cls(
-            consumer_key="dry-run-consumer-key",
-            consumer_secret="dry-run-consumer-secret",
-            domain_url="https://mycompany.my.salesforce.com",
+            consumer_key=kv_client.get_secret("salesforce-consumer-key").value,
+            consumer_secret=kv_client.get_secret("salesforce-consumer-secret").value,
+            domain_url=kv_client.get_secret("salesforce-domain-url").value,
         )
  
     @property
@@ -878,23 +902,44 @@ class SalesforceAuthService:
         self.config = config
  
     def authenticate(self) -> SalesforceConfig:
-        """Authenticate to Salesforce and return updated config with token."""
-        # --- Uncomment for real usage ---
-        # token_url = f"{self.config.domain_url}/services/oauth2/token"
-        # response = requests.post(token_url, data={
-        #     "grant_type": "client_credentials",
-        #     "client_id": self.config.consumer_key,
-        #     "client_secret": self.config.consumer_secret,
-        # })
-        # response.raise_for_status()
-        # token_data = response.json()
-        # self.config.access_token = token_data["access_token"]
-        # self.config.instance_url = token_data["instance_url"]
-        # logger.info(f"Authenticated to Salesforce instance: {self.config.instance_url}")
- 
-        logger.info(f"[DRY RUN] Would authenticate to Salesforce at: {self.config.domain_url}")
-        self.config.access_token = "dry-run-sf-token"
-        self.config.instance_url = self.config.domain_url
+        """Authenticate to Salesforce (OAuth 2.0 Client Credentials) and return
+        the config updated with an access token and instance URL.
+
+        The token POST goes through the shared retry/timeout wrapper with
+        force_dry_run=SOURCE_DRY_RUN, so it hits Salesforce only when the
+        source-read path is live (CONNECTOR_DRY_RUN=false AND
+        CONNECTOR_LIVE_SOURCE=true); otherwise it is simulated and returns a
+        placeholder token. Live and simulated modes share one code path.
+        """
+        # SSRF guard: the domain_url (sourced from Key Vault) must resolve to a
+        # Salesforce-owned host before it is used to build the token endpoint.
+        _validate_url_domain(self.config.domain_url, ".salesforce.com")
+        token_url = f"{self.config.domain_url}/services/oauth2/token"
+
+        def _simulate():
+            return {
+                "access_token": "dry-run-sf-token",
+                "instance_url": self.config.domain_url,
+            }
+
+        response = _request_with_retry(
+            "POST", token_url,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": self.config.consumer_key,
+                "client_secret": self.config.consumer_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            dry_run_payload=_simulate,
+            force_dry_run=SOURCE_DRY_RUN,
+        )
+        token_data = response.json()
+        self.config.access_token = token_data["access_token"]
+        self.config.instance_url = token_data["instance_url"]
+        if SOURCE_DRY_RUN:
+            logger.info(f"[DRY RUN] Would authenticate to Salesforce at: {self.config.domain_url}")
+        else:
+            logger.info(f"Authenticated to Salesforce instance: {self.config.instance_url}")
         return self.config
  
     def get_headers(self) -> dict:
