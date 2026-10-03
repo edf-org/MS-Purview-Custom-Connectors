@@ -3,7 +3,7 @@ Microsoft Purview Custom Connector for Oracle NetSuite - Example Implementation
 =================================================================================
  
 This example demonstrates a complete custom connector that:
-1. Authenticates to Oracle NetSuite via OAuth 1.0a (Token-Based Authentication)
+1. Authenticates to Oracle NetSuite via OAuth 2.0 Client Credentials (machine-to-machine)
 2. Authenticates to Purview using Managed Identity / Service Principal
 3. Discovers NetSuite record types and fields via the SuiteTalk REST Metadata Catalog
 4. Registers custom type definitions in Purview for NetSuite ERP assets
@@ -27,9 +27,10 @@ in place. See the Architecture Document (Section 3) for full step-by-step setup.
 2. Install the required Python packages. Run this in your terminal or command prompt
    from the same directory as this file:
  
-       pip install pyapacheatlas azure-identity azure-keyvault-secrets requests requests-oauthlib python-dotenv
+       pip install pyapacheatlas azure-identity azure-keyvault-secrets requests PyJWT cryptography python-dotenv
  
-   Note: requests-oauthlib is required for NetSuite's OAuth 1.0a signature generation.
+   Note: PyJWT + cryptography sign the OAuth 2.0 client assertion (PS256) with the
+   certificate private key.
  
    If deploying to Azure Functions, add these to your requirements.txt file:
  
@@ -38,7 +39,8 @@ in place. See the Architecture Document (Section 3) for full step-by-step setup.
        azure-identity>=1.15.0
        azure-keyvault-secrets>=4.8.0
        requests>=2.31.0
-       requests-oauthlib>=2.0.0
+       PyJWT>=2.8.0
+       cryptography>=42.0.0
        python-dotenv>=1.0.0
  
 3. A Microsoft Purview account (Data Map enabled) in your Azure subscription.
@@ -52,40 +54,44 @@ in place. See the Architecture Document (Section 3) for full step-by-step setup.
    The connector reads metadata via the NetSuite REST API; it does not modify any
    NetSuite data. NetSuite is NOT a natively supported Purview data source.
  
-6. A NetSuite Integration Record and Token-Based Authentication (TBA) configured.
-   NetSuite's SuiteTalk REST API supports both OAuth 2.0 and OAuth 1.0a (TBA).
-   TBA is the most commonly used approach for server-to-server integrations.
- 
+6. A NetSuite Integration Record configured for OAuth 2.0 Client Credentials (M2M).
+   Token-Based Authentication (TBA / OAuth 1.0a) is not used: NetSuite blocks new
+   TBA integrations from release 2027.1.
+
    Setup steps:
-     a. In NetSuite, navigate to Setup > Company > Enable Features > SuiteCloud.
-        Enable: "REST Web Services", "Token-Based Authentication".
-     b. Create an Integration Record:
-        Setup > Integration > Manage Integrations > New.
-        - Name: "Purview Metadata Connector"
-        - Check "Token-Based Authentication"
-        - Save. Note the Consumer Key and Consumer Secret (shown only once).
-     c. Create an Access Token:
-        Setup > Users/Roles > Access Tokens > New.
-        - Select the Integration record you just created.
-        - Select a User and Role with API access (create a dedicated integration
-          role with read-only access to the record types you need).
-        - Save. Note the Token ID and Token Secret (shown only once).
-     d. Create a dedicated Integration Role with least-privilege access:
+     a. Setup > Company > Enable Features > SuiteCloud. Enable "REST Web Services"
+        and "OAuth 2.0".
+     b. Create a dedicated read-only Integration Role:
         Setup > Users/Roles > Manage Roles > New.
         - Name: "Purview API Read-Only"
-        - Under Permissions > Transactions/Lists/Reports, grant View access
-          to the record types you need to catalog.
-        - Grant "REST Web Services" permission under Setup.
-     e. Note your NetSuite Account ID:
+        - Grant View access to the record types in RECORD_TYPES_TO_SCAN.
+        - Grant "REST Web Services" and "Log in using OAuth 2.0 Access Tokens"
+          (Setup permissions).
+        - Assign the role to a dedicated integration employee/user.
+     c. Create an Integration Record:
+        Setup > Integration > Manage Integrations > New.
+        - Name: "Purview Metadata Connector"
+        - Under OAuth 2.0: check "Client Credentials (Machine to Machine) Grant";
+          scope "REST Web Services". Leave Token-Based Authentication unchecked.
+        - Save. Note the Client ID (shown only once).
+     d. Generate a certificate key pair (the private key never leaves your control):
+            openssl req -x509 -newkey rsa:4096 -sha256 -nodes -days 730 \
+                -keyout netsuite-private-key.pem -out netsuite-cert.pem -subj "/CN=purview-connector"
+     e. Map the certificate:
+        Setup > Integration > OAuth 2.0 Client Credentials (M2M) Setup > Create New.
+        - Entity: the integration user; Role: "Purview API Read-Only";
+          Application: the Integration Record above.
+        - Upload netsuite-cert.pem (the PUBLIC certificate only).
+        - Save. Note the Certificate ID.
+     f. Note your NetSuite Account ID:
         Setup > Company > Company Information > Account ID.
         Format: e.g., "1234567" or "1234567_SB1" for sandbox.
- 
-   FOR OAUTH 2.0 (alternative — newer, but requires authorization code flow):
-     a. Enable OAuth 2.0 in SuiteCloud features.
-     b. Create an Integration Record with OAuth 2.0 scope.
-     c. Complete the authorization code flow to obtain tokens.
-     d. OAuth 2.0 is preferred for SuiteProjects Pro REST API but TBA is
-        still the standard for SuiteTalk REST Web Services.
+
+   The connector signs a short-lived JWT (PS256, kid = Certificate ID) with the
+   private key and exchanges it at
+   https://<account>.suitetalk.api.netsuite.com/services/rest/auth/oauth2/v1/token
+   for a ~60-minute access token. Certificates expire (max 2 years): rotate
+   before expiry by uploading a new certificate and updating Key Vault.
  
 7. Authentication to Purview — choose one of:
  
@@ -159,18 +165,15 @@ Azure portal > Key Vault > Objects > Secrets > + Generate/Import.
                                     Setup > Company > Company Information.
                                     For sandboxes, append _SB1 (e.g., 1234567_SB1).
  
-    netsuite-consumer-key           Consumer Key from the Integration Record.        a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4...
-                                    Found under Manage Integrations > your record.
+    netsuite-client-id              Client ID from the Integration Record.           a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4...
                                     IMPORTANT: Only shown once at creation time.
- 
-    netsuite-consumer-secret        Consumer Secret from the Integration Record.     f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3...
-                                    IMPORTANT: Only shown once at creation time.
- 
-    netsuite-token-id               Token ID from the Access Token.                  a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4...
-                                    Found under Setup > Users/Roles > Access Tokens.
-                                    IMPORTANT: Only shown once at creation time.
- 
-    netsuite-token-secret           Token Secret from the Access Token.              f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3...
+
+    netsuite-certificate-id         Certificate ID from OAuth 2.0 Client            AbCdEf123456...
+                                    Credentials (M2M) Setup.
+
+    netsuite-private-key            Full PEM contents of the private key matching   -----BEGIN PRIVATE KEY-----...
+                                    the uploaded certificate. Upload with:
+                                    az keyvault secret set ... --file netsuite-private-key.pem
                                     IMPORTANT: Only shown once at creation time.
  
 Granting the connector access to read these secrets:
@@ -213,6 +216,7 @@ import logging
 import os
 import re
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -227,7 +231,7 @@ from classification_engine import ClassificationEngine
 # from pyapacheatlas.core import PurviewClient, AtlasEntity, AtlasProcess
 # from azure.identity import DefaultAzureCredential
 # from azure.keyvault.secrets import SecretClient
-# from requests_oauthlib import OAuth1
+# import jwt  # PyJWT: OAuth 2.0 client assertion (lazy-imported on the live path)
 # from dotenv import load_dotenv
 # import requests
  
@@ -265,7 +269,7 @@ PURVIEW_API_VERSION = os.environ.get("PURVIEW_API_VERSION", "2023-09-01")
 
 # Dry-run transport toggle. When true (default), HTTP calls are simulated by
 # _DryRunResponse *through the same request path* used in live mode — so
-# identifier validation, the timeout, the OAuth1 auth object, and the
+# identifier validation, the timeout, the OAuth 2.0 token request, and the
 # retry/backoff wrapper are all genuinely exercised without real credentials.
 # Live mode: set CONNECTOR_DRY_RUN=false and uncomment the requests import.
 DRY_RUN = os.environ.get("CONNECTOR_DRY_RUN", "true").strip().lower() != "false"
@@ -277,6 +281,13 @@ DRY_RUN = os.environ.get("CONNECTOR_DRY_RUN", "true").strip().lower() != "false"
 # when BOTH CONNECTOR_DRY_RUN=false AND CONNECTOR_LIVE_SOURCE=true.
 LIVE_SOURCE = os.environ.get("CONNECTOR_LIVE_SOURCE", "false").strip().lower() == "true"
 SOURCE_DRY_RUN = DRY_RUN or not LIVE_SOURCE
+
+# NetSuite OAuth 2.0 Client Credentials (M2M). The client assertion is a JWT
+# signed with the certificate private key; PS256 is NetSuite's supported RSA
+# algorithm (override only if the certificate was registered for another).
+NETSUITE_JWT_ALG = os.environ.get("NETSUITE_JWT_ALG", "PS256")
+NETSUITE_OAUTH_SCOPES = ["rest_webservices"]
+NETSUITE_ASSERTION_LIFETIME_SECS = 300  # NetSuite rejects assertions valid > 3600s
 
 # Classification-attachment toggle. Classifications are always computed and
 # logged, but attaching them to an entity requires the matching classification
@@ -376,9 +387,9 @@ MAX_RETRIES = 4
 class _DryRunResponse:
     """Minimal stand-in for requests.Response used in dry-run mode.
 
-    Lets the full request path — OAuth1 auth, the configured timeout, and the
-    retry/backoff wrapper — execute unchanged without a live endpoint or the
-    `requests`/`requests-oauthlib` dependencies. status_code is 200 so the
+    Lets the full request path — the OAuth 2.0 token request, the configured
+    timeout, and the retry/backoff wrapper — execute unchanged without a live
+    endpoint or the `requests`/`PyJWT` dependencies. status_code is 200 so the
     success path runs; json() returns the simulated payload.
     """
 
@@ -421,7 +432,7 @@ def _request_with_retry(method: str, url: str, dry_run_payload=None, force_dry_r
     for attempt in range(MAX_RETRIES + 1):
         try:
             if simulate:
-                # Simulated transport: exercises the OAuth1 auth, timeout, and
+                # Simulated transport: exercises the OAuth 2.0 request, timeout, and
                 # this retry/backoff wrapper without a live endpoint.
                 logger.info(
                     f"[DRY RUN] {method} {url.split('?')[0]} (timeout={kwargs['timeout']})"
@@ -718,31 +729,48 @@ class PurviewConfig:
 class NetSuiteConfig:
     """Configuration for connecting to Oracle NetSuite."""
     account_id: str = ""          # e.g., "1234567" or "1234567_SB1"
-    consumer_key: str = ""
-    consumer_secret: str = ""
-    token_id: str = ""
-    token_secret: str = ""
- 
+    client_id: str = ""           # Integration Record client ID (JWT "iss")
+    certificate_id: str = ""      # M2M certificate ID (JWT header "kid")
+    private_key: str = ""         # PEM private key matching the uploaded certificate
+    access_token: str = ""        # returned by the token endpoint
+    token_expires_at: float = 0.0  # epoch seconds; 0 = never authenticated
+
     @classmethod
     def from_key_vault(cls, kv_url: str) -> "NetSuiteConfig":
-        """Load NetSuite credentials from Azure Key Vault."""
-        # --- Uncomment for real usage ---
-        # credential = DefaultAzureCredential()
-        # kv_client = SecretClient(vault_url=kv_url, credential=credential)
-        # return cls(
-        #     account_id=kv_client.get_secret("netsuite-account-id").value,
-        #     consumer_key=kv_client.get_secret("netsuite-consumer-key").value,
-        #     consumer_secret=kv_client.get_secret("netsuite-consumer-secret").value,
-        #     token_id=kv_client.get_secret("netsuite-token-id").value,
-        #     token_secret=kv_client.get_secret("netsuite-token-secret").value,
-        # )
-        logger.info(f"[DRY RUN] Would retrieve NetSuite credentials from Key Vault: {kv_url}")
+        """Load NetSuite OAuth 2.0 (M2M) credentials from Azure Key Vault.
+
+        Live only when the source-read path is live (SOURCE_DRY_RUN is False,
+        i.e. CONNECTOR_DRY_RUN=false AND CONNECTOR_LIVE_SOURCE=true); otherwise
+        returns simulated placeholder credentials without contacting Key Vault.
+
+        Credential selection mirrors the Purview side (get_bearer_token):
+        PURVIEW_USE_CLI_CREDENTIAL=true -> AzureCliCredential (Azure Cloud
+        Shell); otherwise DefaultAzureCredential (production Managed Identity).
+        Requires azure-identity and azure-keyvault-secrets (lazy-imported).
+        """
+        if SOURCE_DRY_RUN:
+            logger.info(f"[DRY RUN] Would retrieve NetSuite credentials from Key Vault: {kv_url}")
+            return cls(
+                account_id="1234567",
+                client_id="dry-run-client-id",
+                certificate_id="dry-run-certificate-id",
+                private_key="dry-run-private-key",
+            )
+
+        from azure.identity import DefaultAzureCredential, AzureCliCredential  # lazy: live path only
+        from azure.keyvault.secrets import SecretClient
+        use_cli = os.environ.get("PURVIEW_USE_CLI_CREDENTIAL", "false").strip().lower() == "true"
+        credential = AzureCliCredential() if use_cli else DefaultAzureCredential()
+        logger.info(
+            f"Retrieving NetSuite credentials from Key Vault {kv_url} via "
+            f"{'AzureCliCredential' if use_cli else 'DefaultAzureCredential'}"
+        )
+        kv_client = SecretClient(vault_url=kv_url, credential=credential)
         return cls(
-            account_id="1234567",
-            consumer_key="dry-run-consumer-key",
-            consumer_secret="dry-run-consumer-secret",
-            token_id="dry-run-token-id",
-            token_secret="dry-run-token-secret",
+            account_id=kv_client.get_secret("netsuite-account-id").value,
+            client_id=kv_client.get_secret("netsuite-client-id").value,
+            certificate_id=kv_client.get_secret("netsuite-certificate-id").value,
+            private_key=kv_client.get_secret("netsuite-private-key").value,
         )
  
     @property
@@ -770,6 +798,11 @@ class NetSuiteConfig:
     def suiteql_url(self) -> str:
         """URL for the SuiteQL query API."""
         return f"{self.base_url}/query/v1/suiteql"
+
+    @property
+    def token_url(self) -> str:
+        """OAuth 2.0 token endpoint (also the JWT "aud" claim)."""
+        return f"{self.base_url}/auth/oauth2/v1/token"
  
  
 # =============================================================================
@@ -814,47 +847,84 @@ class PurviewAuthService:
  
  
 class NetSuiteAuthService:
-    """Handles OAuth 1.0a Token-Based Authentication to Oracle NetSuite.
- 
-    NetSuite uses OAuth 1.0a with HMAC-SHA256 signature method.
-    Every request is signed using four credentials:
-    - Consumer Key + Consumer Secret (from the Integration Record)
-    - Token ID + Token Secret (from the Access Token)
- 
-    The requests-oauthlib library handles the signature generation automatically.
+    """Handles OAuth 2.0 Client Credentials (M2M) authentication to Oracle NetSuite.
+
+    Flow:
+    1. Build a JWT client assertion signed with the certificate private key
+       (header: alg=PS256, kid=certificate ID; claims: iss=client ID,
+       scope=rest_webservices, aud=token URL, iat/exp).
+    2. POST it to the token endpoint (grant_type=client_credentials).
+    3. Use the returned access token as a Bearer token on every API call,
+       re-authenticating shortly before it expires.
     """
- 
+
+    # Refresh this many seconds before actual expiry to avoid mid-run 401s.
+    _TOKEN_EXPIRY_BUFFER_SECS = 60
+
     def __init__(self, config: NetSuiteConfig):
         self.config = config
- 
-    def get_auth(self):
-        """Return an OAuth1 auth object for use with the requests library.
- 
-        Usage:
-            auth = ns_auth.get_auth()
-            response = requests.get(url, auth=auth)
 
-        Runtime-branched (no hand-uncommenting): dry-run returns None (the
-        simulated transport ignores it); live mode returns a real OAuth1 signer
-        (requests-oauthlib lazy-imported so the dry-run path needs no dependency).
-        """
-        if DRY_RUN:
-            logger.info(f"[DRY RUN] Would create OAuth1 auth for NetSuite account: {self.config.account_id}")
-            return None
-
-        from requests_oauthlib import OAuth1  # lazy: live path only
-        return OAuth1(
-            client_key=self.config.consumer_key,
-            client_secret=self.config.consumer_secret,
-            resource_owner_key=self.config.token_id,
-            resource_owner_secret=self.config.token_secret,
-            realm=self.config.account_id,
-            signature_method="HMAC-SHA256",
+    def _build_client_assertion(self) -> str:
+        """Sign the JWT client assertion (live path only)."""
+        import jwt  # PyJWT, lazy: live path only (PS256 needs `cryptography`)
+        now = int(time.time())
+        claims = {
+            "iss": self.config.client_id,
+            "scope": NETSUITE_OAUTH_SCOPES,
+            "aud": self.config.token_url,
+            "iat": now,
+            "exp": now + NETSUITE_ASSERTION_LIFETIME_SECS,
+        }
+        return jwt.encode(
+            claims, self.config.private_key, algorithm=NETSUITE_JWT_ALG,
+            headers={"kid": self.config.certificate_id, "typ": "JWT"},
         )
- 
+
+    def is_token_expired(self) -> bool:
+        """True if the access token is missing or within the expiry buffer."""
+        if not self.config.access_token or self.config.token_expires_at == 0.0:
+            return True
+        return time.time() >= (self.config.token_expires_at - self._TOKEN_EXPIRY_BUFFER_SECS)
+
+    def authenticate(self) -> NetSuiteConfig:
+        """Exchange a signed client assertion for an access token.
+
+        The token POST goes through the shared retry/timeout wrapper with
+        force_dry_run=SOURCE_DRY_RUN, so it reaches NetSuite only when the
+        source-read path is live; otherwise it is simulated. token_url runs
+        the account_id subdomain-injection guard (via base_url).
+        """
+        url = self.config.token_url
+        assertion = "dry-run-client-assertion" if SOURCE_DRY_RUN else self._build_client_assertion()
+        response = _request_with_retry(
+            "POST", url,
+            data={
+                "grant_type": "client_credentials",
+                "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                "client_assertion": assertion,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            dry_run_payload=lambda: {"access_token": "dry-run-ns-token", "expires_in": 3600,
+                                     "token_type": "Bearer"},
+            force_dry_run=SOURCE_DRY_RUN,
+        )
+        token_data = response.json()
+        self.config.access_token = token_data["access_token"]
+        expires_in = int(token_data.get("expires_in", 3600))
+        self.config.token_expires_at = time.time() + expires_in
+        logger.info(f"Authenticated to NetSuite account {self.config.account_id} (token valid {expires_in}s)")
+        return self.config
+
+    def ensure_authenticated(self):
+        """Re-authenticate only if the token is expired/missing. Call before requests."""
+        if self.is_token_expired():
+            self.authenticate()
+
     def get_headers(self) -> dict:
-        """Standard headers for NetSuite REST API calls."""
+        """Standard headers for NetSuite REST API calls, including the Bearer token."""
+        self.ensure_authenticated()
         return {
+            "Authorization": f"Bearer {self.config.access_token}",
             "Content-Type": "application/json",
             "Prefer": "respond-async",  # For large operations
         }
@@ -894,32 +964,11 @@ class NetSuiteDiscoveryService:
         Returns:
             List of field metadata dicts: [{name, type, label, required, ...}, ...]
         """
-        # --- Uncomment for real usage ---
-        # url = f"{self.config.record_api_url}/metadata-catalog/{record_type}"
-        # response = requests.get(url, auth=self.auth.get_auth(), headers=self.auth.get_headers())
-        # response.raise_for_status()
-        # schema = response.json()
-        #
-        # # Parse the JSON Schema to extract field definitions
-        # properties = schema.get("properties", {})
-        # required_fields = schema.get("required", [])
-        # fields = []
-        # for field_name, field_def in properties.items():
-        #     fields.append({
-        #         "name": field_name,
-        #         "type": field_def.get("type", "string"),
-        #         "title": field_def.get("title", field_name),
-        #         "required": field_name in required_fields,
-        #         "readOnly": field_def.get("readOnly", False),
-        #         "enum": field_def.get("enum", None),
-        #     })
-        # return fields
- 
         # Validate record_type against the allow-list before it enters a URL.
         _validate_identifier(record_type, list(SUITEQL_TABLE_MAP.keys()))
         url = f"{self.config.record_api_url}/metadata-catalog/{record_type}"
         response = _request_with_retry(
-            "GET", url, auth=self.auth.get_auth(), headers=self.auth.get_headers(),
+            "GET", url, headers=self.auth.get_headers(),
             dry_run_payload=lambda: {"fields": self._get_simulated_fields(record_type)},
             force_dry_run=SOURCE_DRY_RUN,
         )
@@ -953,26 +1002,6 @@ class NetSuiteDiscoveryService:
         Uses: POST /services/rest/query/v1/suiteql
         Body: {"q": "SELECT COUNT(*) AS cnt FROM {table}"}
         """
-        # --- Uncomment for real usage ---
-        # table_map = {
-        #     "customer": "customer", "vendor": "vendor", "employee": "employee",
-        #     "salesOrder": "transaction WHERE type = 'SalesOrd'",
-        #     "invoice": "transaction WHERE type = 'CustInvc'",
-        #     "purchaseOrder": "transaction WHERE type = 'PurchOrd'",
-        #     "vendorBill": "transaction WHERE type = 'VendBill'",
-        #     "inventoryItem": "item WHERE itemType = 'InvtPart'",
-        #     "journalEntry": "transaction WHERE type = 'Journal'",
-        #     "account": "account",
-        # }
-        # table = table_map.get(record_type, record_type)
-        # url = self.config.suiteql_url
-        # payload = {"q": f"SELECT COUNT(*) AS cnt FROM {table}"}
-        # response = requests.post(url, json=payload, auth=self.auth.get_auth(),
-        #                          headers={**self.auth.get_headers(), "Prefer": "transient"})
-        # response.raise_for_status()
-        # items = response.json().get("items", [])
-        # return items[0].get("cnt", 0) if items else 0
- 
         # SuiteQL injection guard (active in dry-run and live): never interpolate
         # record_type into a query — only the pre-approved table expression from
         # SUITEQL_TABLE_MAP is used.
@@ -991,7 +1020,7 @@ class NetSuiteDiscoveryService:
         url = self.config.suiteql_url
         payload = {"q": f"SELECT COUNT(*) AS cnt FROM {table}"}
         response = _request_with_retry(
-            "POST", url, json=payload, auth=self.auth.get_auth(),
+            "POST", url, json=payload,
             headers={**self.auth.get_headers(), "Prefer": "transient"},
             dry_run_payload=lambda: {"items": [{"cnt": counts.get(record_type, 0)}]},
             force_dry_run=SOURCE_DRY_RUN,
@@ -1278,7 +1307,7 @@ class NetSuiteConnector:
         # Step 1: Authenticate
         logger.info("\n--- Step 1: Authentication ---")
         purview_token = self.purview_auth.get_bearer_token()
-        self.ns_auth.get_auth()  # Validate OAuth credentials
+        self.ns_auth.authenticate()  # OAuth 2.0 M2M token (validates credentials)
         purview_endpoint = self.purview_config.endpoint
  
         # Step 2: Register types

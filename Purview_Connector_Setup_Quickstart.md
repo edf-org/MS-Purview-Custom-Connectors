@@ -24,13 +24,13 @@ A condensed checklist of the steps needed to stand up the custom API solution. F
 6. Set up authentication on each source system you're connecting (Architecture Doc, Section 3.3):
    - **Salesforce** — Connected App with OAuth 2.0 Client Credentials Flow, "api" scope, and a dedicated Run As integration user. Capture the Consumer Key/Secret.
    - **Workday** — API client with OAuth 2.0 refresh token grant.
-   - **NetSuite** — Enable REST Web Services + Token-Based Authentication, create an Integration Record and Access Token. Capture all four values (consumer key/secret, token ID/secret) — they're shown only once.
+   - **NetSuite** — Enable REST Web Services + OAuth 2.0, create an Integration Record with the Client Credentials (M2M) grant, generate a certificate key pair, and map the public certificate under OAuth 2.0 Client Credentials (M2M) Setup. Capture the account ID, client ID (shown only once) and certificate ID; store the private key PEM in Key Vault.
 7. **Store all source credentials as secrets in Key Vault** using the naming conventions in each connector's header comments.
 ## Phase 4: Local Development & Validation
  
 8. Install **Python 3.11** locally (matching the Function App runtime) and the required packages:
    ```
-   pip install pyapacheatlas azure-identity azure-keyvault-secrets requests requests-oauthlib python-dotenv
+   pip install pyapacheatlas azure-identity azure-keyvault-secrets requests PyJWT cryptography python-dotenv
    ```
 9. Create a **`.env` file** (add it to `.gitignore`) with `PURVIEW_ACCOUNT_NAME` and `KEY_VAULT_URL`. With Managed Identity, no tenant/client ID or client secret variables are needed.
 10. **Run a connector in dry-run mode** (the default — no credentials needed) to validate the logic:

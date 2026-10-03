@@ -44,7 +44,7 @@ These Python scripts implement custom connectors for data sources where Purview'
 | Connector | Source System | Auth Method | Key Features |
 |-----------|--------------|-------------|--------------|
 | `purview_salesforce_connector.py` | Salesforce CRM | OAuth 2.0 | Object/field discovery, classifications via engine, cross-system lineage |
-| `purview_netsuite_connector.py` | Oracle NetSuite | OAuth 1.0a (TBA) | Record type/field discovery, classifications via engine, lineage to DW/BI |
+| `purview_netsuite_connector.py` | Oracle NetSuite | OAuth 2.0 Client Credentials (M2M, certificate-signed JWT) | Record type/field discovery, classifications via engine, lineage to DW/BI |
 | `purview_workday_connector.py` | Workday HCM | OAuth 2.0 + refresh | Business object discovery, classifications via engine, lineage to AD |
 | `purview_sql_connector.py` | SQL Server | Service Principal | DB → schema → table → column hierarchy, classifications via engine, lineage |
 

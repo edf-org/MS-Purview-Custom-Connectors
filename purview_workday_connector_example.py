@@ -744,17 +744,36 @@ class WorkdayConfig:
     api_version: str = WORKDAY_API_VERSION
     @classmethod
     def from_key_vault(cls, kv_url):
-        # --- Uncomment for real usage ---
-        # credential = DefaultAzureCredential()
-        # kv_client = SecretClient(vault_url=kv_url, credential=credential)
-        # return cls(client_id=kv_client.get_secret("workday-client-id").value,
-        #            client_secret=kv_client.get_secret("workday-client-secret").value,
-        #            refresh_token=kv_client.get_secret("workday-refresh-token").value,
-        #            tenant_url=kv_client.get_secret("workday-tenant-url").value,
-        #            tenant_name=kv_client.get_secret("workday-tenant-name").value)
-        logger.info(f"[DRY RUN] Would retrieve Workday credentials from Key Vault: {kv_url}")
-        return cls(client_id="dry-run-id", client_secret="dry-run-secret", refresh_token="dry-run-token",
-                   tenant_url="https://wd5-impl-services1.workday.com", tenant_name="mycompany")
+        """Load Workday credentials from Azure Key Vault.
+
+        Live only when the source-read path is live (SOURCE_DRY_RUN is False,
+        i.e. CONNECTOR_DRY_RUN=false AND CONNECTOR_LIVE_SOURCE=true); otherwise
+        returns simulated placeholder credentials without contacting Key Vault.
+
+        Credential selection mirrors the Purview side (get_bearer_token):
+        PURVIEW_USE_CLI_CREDENTIAL=true -> AzureCliCredential (Azure Cloud
+        Shell); otherwise DefaultAzureCredential (production Managed Identity).
+        Requires azure-identity and azure-keyvault-secrets (lazy-imported).
+        """
+        if SOURCE_DRY_RUN:
+            logger.info(f"[DRY RUN] Would retrieve Workday credentials from Key Vault: {kv_url}")
+            return cls(client_id="dry-run-id", client_secret="dry-run-secret", refresh_token="dry-run-token",
+                       tenant_url="https://wd5-impl-services1.workday.com", tenant_name="mycompany")
+
+        from azure.identity import DefaultAzureCredential, AzureCliCredential  # lazy: live path only
+        from azure.keyvault.secrets import SecretClient
+        use_cli = os.environ.get("PURVIEW_USE_CLI_CREDENTIAL", "false").strip().lower() == "true"
+        credential = AzureCliCredential() if use_cli else DefaultAzureCredential()
+        logger.info(
+            f"Retrieving Workday credentials from Key Vault {kv_url} via "
+            f"{'AzureCliCredential' if use_cli else 'DefaultAzureCredential'}"
+        )
+        kv_client = SecretClient(vault_url=kv_url, credential=credential)
+        return cls(client_id=kv_client.get_secret("workday-client-id").value,
+                   client_secret=kv_client.get_secret("workday-client-secret").value,
+                   refresh_token=kv_client.get_secret("workday-refresh-token").value,
+                   tenant_url=kv_client.get_secret("workday-tenant-url").value,
+                   tenant_name=kv_client.get_secret("workday-tenant-name").value)
     @property
     def base_api_url(self):
         # SSRF guard (active in dry-run and live): tenant_url must be a
